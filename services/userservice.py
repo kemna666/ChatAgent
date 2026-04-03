@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime,timezone,timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from fastapi import HTTPException,status
@@ -30,7 +30,7 @@ def verify_password(plain_password, hashed_password):
 #JWT token 生成
 def create_access_token(data: dict):
     to_encode = data.copy()
-    expire_time = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))) + datetime.timedelta(minutes=15)
+    expire_time = datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=15)
     to_encode.update({"exp": expire_time})
     encoded_jwt = jwt.encode(to_encode,SECRET_KEY,algorithm=ALGORITHM)
     return encoded_jwt
@@ -38,13 +38,13 @@ def create_access_token(data: dict):
 
 
 #创建用户
-async def create_user(user:UserModel,db:AsyncSession = Depends(get_db())):
+async def create_user(user:UserModel,db:AsyncSession):
     #查重
     exists = await db.execute(select(UserDB).filter(UserDB.username==user.username))
     if exists.scalar():
         return {"msg":"用户名已存在"}
     hashed_password = get_password_hash(user.password)
-    db_user = UserModel(
+    db_user = UserDB(
         username=user.username,
         password=hashed_password,
         email=user.email,
@@ -58,7 +58,7 @@ async def create_user(user:UserModel,db:AsyncSession = Depends(get_db())):
     return {"msg":"注册成功",'username':user.username}
 
 #用户登录
-async def login_user(form_data: OAuth2PasswordRequestForm = Depends(),db:AsyncSession = Depends(get_db())):
+async def login_user(form_data: OAuth2PasswordRequestForm,db:AsyncSession):
     #查询用户
     result = await db.execute(select(UserDB).filter(UserDB.username==form_data.username))
     user = result.scalar_one_or_none()

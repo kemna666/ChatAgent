@@ -4,17 +4,10 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import Column,Integer,String,DateTime,ForeignKey,UniqueConstraint
 from sqlalchemy.orm import declarative_base, Session
 from sqlalchemy.sql.functions import user
+from database.database import Base
+from schemas.chatschema import ChatMessages
 
-Base = declarative_base()
 
-class ChatMessages(BaseModel):
-    sender: str
-    content:str
-
-    @validator('content')
-    def content(cls, v):
-        if len(v.strip()) == 0:
-            raise ValidationError('Content cannot be empty')
 
 class ChatMessagesDB(Base):
     __tablename__ = 'messages'

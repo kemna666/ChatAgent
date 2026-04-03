@@ -8,7 +8,7 @@ class UserLoginModel(BaseModel):
     @field_validator('username',mode='before')
     def validate_username(cls, v:str):
         if len(v.strip()) == 0:
-            return {'msg':"无效的用户名或者密码"}
+            raise ValueError("无效的用户名或者密码")
         return None
 
 
@@ -22,13 +22,13 @@ class UserModel(BaseModel):
     @field_validator("username",mode='before')
     def validate_username(cls, v:str):
         if len(v.strip()) <6 or len(v.strip()) > 10:
-            return {'msg':'无效的用户名,用户名必须由6-10为大小写字母和数字组成'}
+            raise ValueError('无效的用户名,用户名必须由6-10为大小写字母和数字组成')
         if not re.match(r"^[a-zA-Z0-9]{6,10}$", v):
-            return {'msg':"无效的用户名,用户名必须由6-10为大小写字母和数字组成"}
-        return None
+            raise ValueError("无效的用户名,用户名必须由6-10为大小写字母和数字组成")
+        return v
 
     @field_validator('password',mode='before')
     def validate_password(cls, v:str):
         if not v:
-            return {'msg':'密码不能为空'}
-        return None
+            raise ValueError('密码不能为空')
+        return v

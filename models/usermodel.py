@@ -5,9 +5,9 @@ from sqlalchemy import Column,String,DateTime
 from sqlalchemy.orm import declarative_base
 #使用UUID
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from database.database import Base as BASE
 
 #数据表模型基类
-BASE = declarative_base()
 #用户的数据库模型
 class UserDB(BASE):
     __tablename__ = "users"
