@@ -22,7 +22,9 @@ class UserDB(BASE):
     username = Column(String(15),nullable=False)
     email = Column(String(255),nullable=False)
     password = Column(String(255),nullable=False)
+    #创建时间
     created_at = Column(DateTime,default=datetime.datetime.now)
-
+    #权限
+    permission = Column(String(10),default='user')
 
 

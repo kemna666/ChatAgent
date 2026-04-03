@@ -17,14 +17,3 @@ class ChatMessagesDB(Base):
     create_time = Column(DateTime,default=datetime.datetime.now)
     content = Column(String(102400))
 
-def save_chat(message:ChatMessages,db:Session):
-    db_msg = ChatMessagesDB(
-        sender=message.sender,
-        content=message.content
-    )
-
-    db.add(db_msg)
-
-    db.commit()
-    db.refresh(db_msg)
-    return db_msg
