@@ -10,13 +10,13 @@ from database.database import get_db
 from models.usermodel import UserDB
 from passlib.context import CryptContext
 from jose import jwt
-
+from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 from schemas.userschema import UserModel
 
 
 SECRET_KEY = ''
 ALGORITHM = 'HS256'
-
+security = HTTPBearer()
 
 #密码加密
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
@@ -36,6 +36,23 @@ def create_access_token(data: dict):
     return encoded_jwt
 
 
+#获取用户名
+async def get_current_user(credentials:HTTPAuthorizationCredentials,db:AsyncSession=Depends(get_db)):
+    try:
+        payload = jwt.decode(credentials.credentials,SECRET_KEY)
+        username:str = payload.get('sub')
+        if username is None:
+            raise HTTPException(status_code=401,detail="token无效")
+    except jwt.JWTError:
+        raise HTTPException(status_code=401,detail ="token无效")
+    result = await db.execute(
+        select(UserDB).filter(UserDB.username==username)
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=401,detail="用户错误")
+    #返回用户对象
+    return user
 
 #创建用户
 async def create_user(user:UserModel,db:AsyncSession):

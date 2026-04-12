@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime,timezone,timedelta
 import uuid
 
 from sqlalchemy import Column,String,DateTime
@@ -6,6 +6,8 @@ from sqlalchemy.orm import declarative_base
 #使用UUID
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from database.database import Base as BASE
+from sqlalchemy.orm import relationship
+
 
 #数据表模型基类
 #用户的数据库模型
@@ -23,8 +25,9 @@ class UserDB(BASE):
     email = Column(String(255),nullable=False)
     password = Column(String(255),nullable=False)
     #创建时间
-    created_at = Column(DateTime,default=datetime.datetime.now)
+    created_at = Column(DateTime,default=datetime.now(timezone(timedelta(hours=8))))
     #权限
     permission = Column(String(10),default='user')
 
+    users = relationship("User",back_populates="Chat")
 

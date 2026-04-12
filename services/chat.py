@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from models.chatmodel import ChatMessagesDB
 from schemas.chatschema import ChatMessages
-
+from langchain.chat_models import OpenAI
 
 def save_chat(message:ChatMessages,db:Session):
     db_msg = ChatMessagesDB(
