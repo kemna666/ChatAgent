@@ -1,33 +1,30 @@
 from datetime import datetime,timezone,timedelta
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String,DateTime
+from sqlalchemy.orm import relationship
+from .session import Base
+import bcrypt
 import uuid
 
-from sqlalchemy import Column,String,DateTime
-from sqlalchemy.orm import declarative_base
-#使用UUID
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from database.database import Base as BASE
-from sqlalchemy.orm import relationship
+#this is the table of users
+class User(Base):
+    __tablename__ = 'users'
 
+    id = Column(UUID(as_uuid=True),primary_key=True,index=True,default=uuid.uuid4)
+    email = Column(String,unique=True,nullable=False)
+    username = Column(String,nullable=False)
+    hashed_passwd = Column(String,nullable=False)
+    created_at = Column(DateTime(timezone=True),default=lambda:datetime.now(timezone(timedelta(hours=8))))
+    sessions = relationship("Session",back_populates="user")
 
-#数据表模型基类
-#用户的数据库模型
-class UserDB(BASE):
-    __tablename__ = "users"
-    #user ID使用UUID标识，作为主键且唯一
-    id = Column(
-        PGUUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
-    )
-    username = Column(String(15),nullable=False)
-    email = Column(String(255),nullable=False)
-    password = Column(String(255),nullable=False)
-    #创建时间
-    created_at = Column(DateTime,default=datetime.now(timezone(timedelta(hours=8))))
-    #权限
-    permission = Column(String(10),default='user')
+    def verify_passwd(self,passwd:str)->bool:
+        return bcrypt.checkpw(passwd.encode('utf-8')).decode('utf-8')
 
-    users = relationship("User",back_populates="Chat")
+    @staticmethod
+    def hash_passwd(passwd:str) -> str:
+        # generate hash
+        salt = bcrypt.gensalt()
+        return bcrypt.hashpw(passwd.encode('utf-8'),salt).decode('utf-8')
 
+#avoid circular imports eerror
+from .session import Session

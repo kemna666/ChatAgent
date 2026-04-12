@@ -1,34 +1,40 @@
+from datetime import datetime
 import re
-from pydantic import BaseModel, EmailStr, field_validator
-
-#用户登录时候的验证模型
-class UserLoginModel(BaseModel):
-    username:str
-    password:str
-    @field_validator('username',mode='before')
-    def validate_username(cls, v:str):
-        if len(v.strip()) == 0:
-            raise ValueError("无效的用户名或者密码")
-        return None
+from pydantic import BaseModel,EmailStr,Field,field_validator,SecretStr
+from uuid import UUID
 
 
-#用户创建时使用Pydantic进行数据验证
-class UserModel(BaseModel):
-    username:str
-    password:str
-    email:EmailStr
+class UserCreate(BaseModel):
+    username:str = Field(...,description='the nickname of a user')
+    email:EmailStr = Field(...,description='User email addr')
+    passwd:SecretStr = Field(...,description="User's password")
 
-    #用户名必须由6-10位英文组成，只能是英文字母
-    @field_validator("username",mode='before')
-    def validate_username(cls, v:str):
-        if len(v.strip()) <6 or len(v.strip()) > 10:
-            raise ValueError('无效的用户名,用户名必须由6-10为大小写字母和数字组成')
-        if not re.match(r"^[a-zA-Z0-9]{6,10}$", v):
-            raise ValueError("无效的用户名,用户名必须由6-10为大小写字母和数字组成")
+    @field_validator('passwd')
+    def validate_passwd(cls,v:SecretStr):
+        passwd = v.get_secret_value()
+
+        if len(passwd)<10:
+            raise ValueError('密码不能小于10位')
+        if not (re.search(r'[A-Z]',passwd) or re.search(r'[a-z]',passwd) or re.search(r'[0-9]',passwd)):
+            raise ValueError('密码必须由大小写+数字三者组成！')
         return v
+    
+class Token(BaseModel):
+    access_token:str = Field(...,description='JWT access token')
+    token_type:str = Field(default='bearer',description='token type')
+    expires_at:datetime = Field(...,description='when token expires')
 
-    @field_validator('password',mode='before')
-    def validate_password(cls, v:str):
-        if not v:
-            raise ValueError('密码不能为空')
-        return v
+
+class UserResponse(BaseModel):
+    id:UUID = Field(...,description='user id')
+    email:str = Field(...,description='user email')
+    token:str = Field(...,description='auth token')
+
+
+class SessionResponse(BaseModel):
+
+    session_id:UUID = Field(...,description='the id of session')
+
+    name:str = Field(...,description='the name of session')
+
+    token:str = Field(...,description='the token for session')
