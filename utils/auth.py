@@ -31,7 +31,7 @@ def verify_token(token:str) -> Optional[str]:
         logger.error(f'token verification failed,error = {str(e)}')
         return None
     
-def create_access_token(thread_id:str,expires_delta:Optional[timedelta] = timedelta(minutes=15)) -> Token:
+def create_access_token(thread_id:str,expires_delta:Optional[timedelta] = timedelta(hours=10)) -> Token:
     #create a new access token for a thread
     expire = datetime.now(timezone(timedelta(hours=8))) + expires_delta
     to_encode = {

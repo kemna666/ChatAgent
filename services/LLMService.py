@@ -2,20 +2,19 @@ from typing import Any, Dict,List, Optional
 from loguru import logger
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import BaseMessage
 from openai import APIError, APITimeoutError, OpenAIError, RateLimitError
-from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from config.config import config
+
+from schemas.llm import Message
 
 
-
-
-default_model = ''
 
 class LLMRegistry:
     _models:List[Dict[str,Any]] =[]
     _instances:Dict[str,BaseChatModel] = {} 
-    __api_key__ = ''
-    __base_url__ = ''
+    __api_key__ = config.llms['api_key']
+    __base_url__ = config.llms['base_url']
     _max_token = 1000
     @classmethod
     def load_cfg(cls,file_path) -> None:
@@ -24,15 +23,17 @@ class LLMRegistry:
 
 
     @classmethod 
-    def register(cls,model_name:str,reasoning:Dict[str,str] = {'effort':'low'},**kwargs) -> None:
+    def register(cls,model_name:str,provider:str,reasoning:Dict[str,str] = {'effort':'low'},**kwargs) -> None:
         # register model in dynamic mode
         cls._models.append({
             'name':model_name,
             'api_key':cls.__api_key__,
             'max_tokens':cls._max_token,
             'reasoning':reasoning,
+            'provider':provider,
             **kwargs
         })
+        cls.create_llm(model_name,provider)
         logger.info(f'LLM Registered:{model_name}')
 
     @classmethod
@@ -41,12 +42,22 @@ class LLMRegistry:
         return list(model['name'] for model in cls._models)
     
     @classmethod
-    def create_llm(cls,model_name:str) -> BaseChatModel:
+    def create_llm(cls,model_name:str,provider:str) -> BaseChatModel:
         # create llm chat session
         model_cfg = next((m for m in cls._models if m["name"] == model_name), None)
         if not model_cfg:
             raise ValueError(f"Model {model_name} not found")
-        cls._instances[model_name] = init_chat_model(model_cfg)
+        
+        logger.info(f'LLM Creating:{model_name}')
+        
+        cls._instances[model_name] = init_chat_model(
+            model=model_name,
+            model_provider=provider,
+            api_key = cls.__api_key__,
+            base_url = cls.__base_url__,
+            max_tokens = cls._max_token,
+        )
+        logger.info(f'LLM Created:{model_name}')
         return cls._instances[model_name]
     
     @classmethod
@@ -57,18 +68,30 @@ class LLMRegistry:
 class LLMService:
 
     def __init__(self):
+        self.register_models()
         self._llm:Optional[BaseChatModel] = None
-
         self.all_model_names = LLMRegistry.get_all_model_names()
         self.num_models = len(self.all_model_names)
+        self.default_model = config.llms['default_model']
 
         try:
-            self.current_model = default_model
-            self._llm = LLMRegistry.get(default_model)
+            self.current_model = self.default_model
+            self._llm = LLMRegistry.get(self.default_model)
             logger.info(f'model has been initialized,model name:{self.current_model}')
         except (ValueError,Exception) as e:
-            logger.error(f'model has not been initialized successfully,model name = {self.current_model},error:{str(e)}')
+            logger.error(f'model has not been initialized successfully,error:{str(e)}')
         
+
+    def register_models(self):
+        try:
+            if config.llms['models'] is not None:
+                for i,model in enumerate(config.llms['models']):
+                    provider = model['provider']
+                    LLMRegistry.register(model['model'],provider)
+                    logger.info(f'model has been registered,model name:{model["model"]},provider:{provider}')
+        except Exception as e:
+            logger.error(f'model registration failed,error = {str(e)},{config.llms["models"]}')
+    
     def switch_model(self,model_name:str) -> bool:
         try:    
             self.model = LLMRegistry.get(model_name)    
@@ -83,14 +106,14 @@ class LLMService:
     
 
     @retry(
-        stop=stop_after_attempt(10),
+        stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIError)),
-        before_sleep=before_sleep_log(logger, "WARNING"),
+        before_sleep=lambda retry_state: logger.warning(f"Retrying LLM call... attempt #{retry_state.attempt_number}; sleep for {retry_state.next_action.sleep} seconds; last exception: {retry_state.outcome.exception() if retry_state.outcome else 'None'}"),
         reraise=True,
     )
 
-    async def _call_llm_with_retry(self, messages: List[BaseMessage]) -> BaseMessage:
+    async def _call_llm_with_retry(self, messages: List[Message]) -> Message:
         """Call the LLM with automatic retry logic.        """
         if not self._llm:
             raise RuntimeError("llm not initialized")
@@ -115,7 +138,7 @@ class LLMService:
             )
             raise
 
-    async def call(self,message:List[BaseMessage],model_name:Optional[str] = None) -> BaseMessage:
+    async def call(self,message:List[Message],model_name:Optional[str] = None) -> Message:
         if model_name:
             await self.switch_model(model_name)
         try:  

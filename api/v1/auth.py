@@ -46,19 +46,26 @@ async def get_current_user(
     except ValueError as ve:
         logger.error(f'token vaildation failed,error:{str(ve)}')
         raise HTTPException(
-            status_code=422,
-            detail='invaild token format',
+            status_code=401,
+            detail='invaild token',
+            headers={"WWW-Authenticate":"Bearer"}
+        )
+    except Exception as e:
+        logger.error(f'token validation failed, error = {str(e)}')
+        raise HTTPException(
+            status_code=401,
+            detail='invaild token',
             headers={"WWW-Authenticate":"Bearer"}
         )
 
 
-async def get_current_session(credentials:HTTPAuthorizationCredentials = Depends(security)) -> Session:
+async def get_current_session(session_id:str,credentials:HTTPAuthorizationCredentials = Depends(security)) -> Session:
     # get current session Id from token
     try:
 
         token = sanitize_string(credentials.credentials)
 
-        session_id = verify_token(token)
+        user_id = verify_token(token)
 
         if session_id is None:
             logger.error('session id not found')
@@ -67,8 +74,7 @@ async def get_current_session(credentials:HTTPAuthorizationCredentials = Depends
                 detail='invaild session',
                 headers={"WWW-Authenticate":"Bearer"}
             )
-
-        session_id = sanitize_string(session_id)
+        user_id = UUID(user_id) 
 
         session = await db_service.get_session(session_id)
         if session is None:
@@ -78,16 +84,27 @@ async def get_current_session(credentials:HTTPAuthorizationCredentials = Depends
                 detail='session not found',
                 headers = {"WWW-Authenticate":"Bearer"}
             )
-
-        logger.bind(user_id = session.user_id)
+        if session.user_id != user_id:
+            logger.error('session not belong to user')
+            raise HTTPException(
+                status_code=401,
+                detail='session not belong to user',
+                headers={"WWW-Authenticate":"Bearer"}
+            )
 
         return session
     
     except ValueError as e:
         logger.error(f'token vaildation failed,error = {str(e)}')
         raise HTTPException(
-            status_code=422,
-            detail='invaild token format',
+            status_code=401,
+            detail='invaild token',
+            headers={"WWW-Authenticate":"Bearer"})
+    except Exception as e:
+        logger.error(f'token validation failed, error = {str(e)}')
+        raise HTTPException(
+            status_code=401,
+            detail='invaild token',
             headers={"WWW-Authenticate":"Bearer"})
     
 @router.post('/register',summary='register')
@@ -162,9 +179,10 @@ async def create_session(
         raise HTTPException(status_code=422, detail=str(ve))
     
 @router.patch('/session/{session_id}/name',response_model=SessionResponse,summary='update the name of session')
-async def update_session_name(session_id:UUID,name:str = Form(...),current_session:Session = Depends(get_current_session)):
+async def update_session_name(session_id:str,name:str = Form(...)):
     try:
         name = sanitize_string(name)
+        current_session = await get_current_session()
         if session_id != current_session.session_id:
             raise HTTPException(status_code=403,detail='can not modify other session')
         
@@ -179,9 +197,14 @@ async def update_session_name(session_id:UUID,name:str = Form(...),current_sessi
     
 
 @router.delete('/session/{session_id}',summary='delete a session')
-async def delete_session(session_id:UUID,current_session:Session = Depends(get_current_session)):
+async def delete_session(session_id:str,user:User = Depends(get_current_user)):
     try:
-        if session_id != current_session:
+        session_id = sanitize_string(session_id)
+        current_session = await get_current_session(session_id=session_id)
+        if current_session is None:
+            raise HTTPException(status_code=404,detail='session not found')
+        
+        if current_session.user_id != user.id:
             raise HTTPException(status_code=403,detail='can not delete other sessions')
         
         await db_service.delete_session(session_id)
@@ -203,9 +226,9 @@ async def get_sessions(user:User = Depends(get_current_user)):
 
         return [
             SessionResponse(
-                session_id= session.session_id,
+                session_id= str(session.session_id),
                 name= session.session_name,
-                token= create_access_token(session.session_id)
+                token= create_access_token(str(session.session_id)).access_token
             )
             for session in sessions
         ]

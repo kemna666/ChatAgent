@@ -1,10 +1,11 @@
 import asyncio
 from typing import AsyncGenerator, Dict, List, Optional
+from psycopg_pool import AsyncConnectionPool
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
-from langchain_core.messages import BaseMessage, ToolMessage
+from sqlalchemy.ext.asyncio import AsyncEngine
+from langchain_core.messages import HumanMessage, ToolMessage
 from schemas.llm import GraphState
-from utils.llm_process import dump_messages, handle_response, prepare_message
+from utils.llm_process import conver_message, dump_messages, handle_response, prepare_message
 from services.LLMService import llmservice
 from loguru import logger
 from agent.tools.tools import tools
@@ -12,17 +13,16 @@ from mem0 import AsyncMemory
 from langgraph.graph.state import CompiledStateGraph,Command, RunnableConfig
 from sqlalchemy.dialects.postgresql import UUID
 from schemas.llm import Message
-from langchain_core.callbacks.manager import CallbackManager
 from langchain_core.messages import convert_to_openai_messages
 from langgraph.graph import StateGraph,END
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver 
 from services.memory import memory_service
 from langgraph.errors import GraphInterrupt
 from langgraph.types import StateSnapshot
+from mem0.configs.base import MemoryConfig
 
-
-DATABASE_URL =  ''
-CHCKPT_TABLE = ''
+DATABASE_URL =  'postgresql://postgres:123456@localhost:5432/ckpt'
+CHCKPT_TABLE = 'checkpoints'
 
 
 class LangGraphAgent:
@@ -33,34 +33,23 @@ class LangGraphAgent:
         self.llm_service = llmservice
         # bind tools
         self.llm_service.bind_tools(tools)
-        self._async_enfine:Optional[AsyncEngine] = None
+        self._async_engine:Optional[AsyncEngine] = None
         self._graph:Optional[CompiledStateGraph] = None
         self.memory:Optional[AsyncMemory] = None
         self.tools_by_name = {tool.name: tool for tool in tools}
+        self._connection_pool:Optional[AsyncConnectionPool] = None
         logger.info('agent has been initialized')
 
-    async def _get_async_engine(self) -> Optional[AsyncEngine]:
-        if self._async_enfine is None:
-            try:
-                # postgresql+asyncpg://user:pass@host:port/db
-              
-                self._engine = create_async_engine(
-                    DATABASE_URL,
-                    pool_pre_ping=True,  # 自动检测失效连接
-                    echo=False           # 生产环境关闭SQL日志
-                )
-            except Exception:
-                return None # 连接失败返回None
-        return self._engine
-    async def _long_term_memory(self) -> AsyncMemory:
+
+    def _long_term_memory(self) -> AsyncMemory:
         #initialize long term memory
         if self.memory is None:
-            self.memory = await AsyncMemory.from_config(
+            self.memory = AsyncMemory(config=MemoryConfig(
                           config_dict={
                     "vector_store": {
                         "provider": "pgvector",
                         "config": {
-                            "collection_name": '',
+                            "collection_name": 'memories',
                             "dbname": 'memories',
                             "user": 'postgres',
                             "password": '123456',
@@ -70,21 +59,22 @@ class LangGraphAgent:
                     },
                     "llm": {
                         "provider": "openai",
-                        "config": {"model": ''},
+                        "config": {"model": 'qwen/qwen3.6-plus'},
                     },
-                    "embedder": {"provider": "openai", "config": {"model": ''}},
+                    "embedder": {"provider": "openai", "config": {"model": 'qwen/qwen3.6-plus'}},
                     # "custom_fact_extraction_prompt": load_custom_fact_extraction_prompt(),
-                }
-            )
+                }))
         return self.memory
     
     async def _get_memory(self,user_id:UUID,query:str) ->str:
         # get relevant memory about th query for user
         try:
-            memory = await self._long_term_memory()
-            results = await memory.search(user_id= str(user_id),query=query)
+            if self.memory is None:
+                 self._long_term_memory()
+            memory_instance = self.memory
+            results = await memory_instance.search(user_id= str(user_id),query=query)
 
-            return '\n'.join(f"{result[memory]}"for result in results)
+            return '\n'.join(f"{result.get('memory')}"for result in results)
         
         except Exception as e:
             logger.error(f'failed to get memory,error = {str(e)}')
@@ -93,8 +83,8 @@ class LangGraphAgent:
     async def _update_long_term_memory(self,user_id:UUID,messages:List[dict],metadata:dict) -> None:
         # update memory through user's messages
         try:
-            self.memory = await self._long_term_memory()
-            await self.memory.add(messages=messages,user_id=str(user_id),metadata=metadata)
+            memory_instance = self._long_term_memory()
+          #  await memory_instance.add(messages=messages,user_id=str(user_id),metadata=metadata)
             logger.info('memory updated successfully')
 
         except Exception as e:
@@ -111,38 +101,50 @@ class LangGraphAgent:
         # get llm info
 
         # load system prompts
-        SYSTEM_PROMPT = ''
+        SYSTEM_PROMPT = '你是一个猫娘，喵喵喵～'
         # handle messages in advance
-        messages = prepare_message()
+
+        messages = prepare_message(state.messages, current_llm, SYSTEM_PROMPT)
 
         try:
             # use llm with auto retries and circular fdllback
             # 
+            response_message = await self.llm_service.call(dump_messages(messages))
             # process response
+
+            if not response_message.content:
+                ak = response_message.additional_kwargs or {}
+
+                response_message.content = (
+                ak.get("content")
+                or ak.get("text")
+                or ak.get("output")
+                or ak.get("response")
+                or ak.get("reasoning_content")
+                or str(ak)
+            )
+            logger.debug(f'original response = {response_message.content},type={type(response_message.content)}')
             response_message = handle_response(response_message)
 
-            logger.info(
-                'llm response generated'
-            ) 
+
             if response_message.tool_calls:
                 goto = 'tool_call'
             else:
-                goto = 'end'
-
-            return Command(update = {'messages':[response_message]},goto = goto)
+                goto = END
+            return Command(update = {'messages':state.messages + [response_message]},goto = goto)
         
         except Exception as e:
             logger.error(
                 f'llm failed all models,error = {str(e)}'
             )
-            raise Exception(f'failed to get response')
+            raise Exception(f'failed to get response,error = {str(e)}')
           
     async def _call_tool(self,state:GraphState) -> Command:
         #process tool calling
         outputs:List[ToolMessage] = []
         for tool in state.messages[-1].tool_calls:
             # ASYNC INVOKE TOOL
-            tool_result = await self.tools_by_name[tool['name'].ainvoke(tool['args'])]
+            tool_result = self.tools_by_name[tool['name'].ainvoke(tool['args'])]
             outputs.append(
                 ToolMessage(
                     content= tool_result,
@@ -152,6 +154,32 @@ class LangGraphAgent:
             )
         return Command(update={'messages':outputs},goto = 'chat')
     
+    async def _get_connection_pool(self) -> AsyncConnectionPool:
+         if self._connection_pool is None:
+            try:
+                # Configure pool size based on environment
+                max_size = 10
+
+                connection_url = DATABASE_URL
+
+                self._connection_pool = AsyncConnectionPool(
+                    connection_url,
+                    open=False,
+                    max_size=max_size,
+                    kwargs={
+                        "autocommit": True,
+                        "connect_timeout": 5,
+                        "prepare_threshold": None,
+                    },
+                )
+                await self._connection_pool.open()
+                logger.info(f"connection_pool_created,max_size={max_size}")
+            except Exception as e:
+                logger.error(f"connection_pool_creation_failed,error = {str(e)}")
+                # In production, we might want to degrade gracefully
+                raise e
+            return self._connection_pool
+
     async def create_graph(self) -> Optional[CompiledStateGraph]:
         # create langchain workflow
         if self._graph is None:
@@ -160,34 +188,53 @@ class LangGraphAgent:
                 graph_builder = StateGraph(GraphState)
                 # add a chat node that can go to the end of calling tools or  
                 graph_builder.add_node('chat',self._chat,ends = ['tool_call',END])
-                graph_builder.add_node('tool_call',self._call_tool,ends = ['chat'])
+                graph_builder.add_node('tool_call',self._call_tool,ends = ['chat',END])
+                graph_builder.add_conditional_edges(
+                    "chat",
+                    self._route_after_chat,
+                    {"tool_call": "tool_call", END: END}
+                )
                 # set entry and finish node 
                 graph_builder.set_entry_point('chat')
-                graph_builder.set_finish_point('chat')
-                # get the connection pool of sqlalchemy
-                async_engine:AsyncEngine = await self._get_async_engine()
-                checkpointer = None
-                if async_engine:
-                    checkpointer = AsyncPostgresSaver(async_engine)
+                # get the connection pool of pgsql
+                connection_pool = await self._get_connection_pool()
+                
+                if connection_pool:
+                    # create a checkpointer to save the state of the graph
+                    checkpointer = AsyncPostgresSaver(connection_pool)
+                    # setup the checkpointer
                     await checkpointer.setup()
                 else:
                     raise Exception('connection initialization failed')
+                
+                # compile the graph
                 self._graph = graph_builder.compile(
                     checkpointer = checkpointer,
                     name = f'Agent'
                 )
                 logger.info('graph created')
-            
+                
             except Exception as e:
                 logger.error(f"graph_creation_failed,error = {str(e)}")
                 raise e
+            return self._graph
+        
+    def _route_after_chat(self, state: GraphState) -> str:
+        # 根据模型输出决定下一步
+        last_message = state.messages[-1]
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            return "tool_call"
+        return END  # 没有工具调用时结束
+    
 
-    async def get_response(self,message:List[Message],session_id:str,thread_id:str,user_id:Optional[UUID]=None) -> List[dict]:
+    
+    async def get_response(self,message:List[Message],session_id:str,user_id:Optional[UUID]=None) -> List[Message]:
         # get response from llm
-
+          if self._graph is None:
+              await self.create_graph()
           config = {
             "configurable": {"thread_id": session_id},
-            "callbacks": [CallbackManager()],
+            "callbacks": [],
             "metadata": {
                 "user_id": user_id,
                 "session_id": session_id,
@@ -200,10 +247,9 @@ class LangGraphAgent:
           ) or 'No relevant memory found'
 
           try:
-              
               response = await self._graph.ainvoke(
-                  input = {'messages':dump_messages(message),'memory':relavent_memory},
-                  config=config
+                input={"messages": dump_messages(message), "long_term_memory": relavent_memory},
+                config=config
               )
               asyncio.create_task(
                   self._update_long_term_memory(
@@ -212,35 +258,52 @@ class LangGraphAgent:
                       config['metadata']
                   )
               )
-              return self.__process_messages(response['messages'])
+              r = await self.__process_messages(response['messages'])
+              logger.info(f'output messages = {r},type={type(r)}')
+              assistant_message = [msg for msg in r if msg.role == 'assistant']
+              if assistant_message:
+                  logger.debug(f'assistant message = {assistant_message},role = {assistant_message[-1].role}')
+                  return [assistant_message[-1]]
+              else:
+                  logger.warning(f'no assistant message found in response')
+                  return []
           except Exception as e:
               logger.error(f'error to get response,error = {str(e)}')
+              return []
 
     async def get_stream_response(self,messages:List[Message],session_id:UUID,user_id:Optional[str] = None) -> AsyncGenerator[str,None]:
         # get a stream response from LLM
         config = {
             "configurable": {"thread_id": str(session_id)},
-            #"callbacks": [langfuse_callback_handler],
+            "callbacks": [],
             "metadata": {
                 "user_id": str(user_id),
                 "session_id": str(session_id),
             },
         }
-
+        
         if self._graph is None:
-            self.create_graph()
+                self._graph =await self.create_graph()
+
 
         try:
+
+
+                
             state = await self._graph.aget_state(config)
-            if state.next:
+            
+            relevant_memory = await memory_service.search(user_id, messages[-1].content) or 'No relevant memory found'
+            if  state and state.next:
                 logger.info('resuming interupted graph stream')
                 graph_input = Command(resume=messages[-1].content)
             else:
-                relavent_memory = (
+                relevant_memory = (
                     await memory_service.search(user_id,messages[-1].content)
-                ) or 'No relavent memory found'
-                graph_input={'messages':dump_messages(messages),'memory': relavent_memory},
-            
+                ) or 'No relevant memory found'
+                graph_input =  {"messages": dump_messages(messages), "long_term_memory": relevant_memory}
+                logger.debug(f'graph_input = {graph_input}')
+
+             
             async for token,_ in self._graph.astream(
                 input = graph_input,
                 config=config,
@@ -248,21 +311,20 @@ class LangGraphAgent:
             ):
                 if isinstance(token.content,str) and token.content:
                     yield token.content
-            
+            # After streaming completes, check for interrupt or update memory
             state = await self._graph.aget_state(config)
             if state.next:  
                 interrupt_value = state.tasks[0].interrupts[0].value if state.tasks else "Waiting for input."
                 logger.info("graph_interrupted", session_id=str(session_id), interrupt_value=str(interrupt_value))
                 yield str(interrupt_value)
 
-            elif state.values and 'message' in state.values:
+            elif state.values and 'messages' in state.values:
                 # add memory for user 
                 asyncio.create_task(
                     memory_service.add_memory(user_id,convert_to_openai_messages(state.values['messages']),config['metadata'])
                 )
             
         except GraphInterrupt:
-            state = await self._graph.aget_state(config)
             interrupt_value = state.tasks[0].interrupts[0].value if state.tasks else "Waiting for input."
             logger.info("graph_interrupted_stream", session_id=str(session_id), interrupt_value=str(interrupt_value))
             yield str(interrupt_value)
@@ -280,38 +342,91 @@ class LangGraphAgent:
             config={"configurable": {"thread_id": str(session_id)}}
         )
 
-        return self.__process_messages(state.valuess['messages']) if state.values else []
+        return self.__process_messages(state.values['messages']) if state.values and 'messages' in state.values else []
     
-    async def __process_messages(self,messages:List[BaseMessage]) -> List[Message]:
-
-        openai_style_messages = convert_to_openai_messages(messages)
-
-        return [
-            Message(role=message["role"], content=str(message["content"]))
-            for message in openai_style_messages
-            if message["role"] in ["assistant", "user"] and message["content"]
-        ]
+    async def __process_messages(self,messages:List[Message]) -> List[Message]:
+        try:
+            # Convert LangChain messages to OpenAI-style format
+            openai_style_messages = convert_to_openai_messages(messages)
+            
+            result = []
+            for item in openai_style_messages:
+                # Check if item is a dictionary (expected format)
+                if isinstance(item, dict) and "role" in item and "content" in item:
+                    role = item["role"]
+                    content = str(item["content"])
+                # Otherwise, it might be a LangChain message object
+                elif hasattr(item, 'type') and hasattr(item, 'content'):
+                    # Map LangChain message type to our role
+                    lc_type = getattr(item, 'type', '')
+                    if lc_type == 'ai':
+                        role = 'assistant'
+                    elif lc_type == 'human':
+                        role = 'user'
+                    elif lc_type == 'system':
+                        role = 'system'
+                    else:
+                        role = 'user'  # default
+                    content = str(item.content)
+                else:
+                    # Skip items that don't match expected formats
+                    continue
+                
+                # Only add messages with supported roles and non-empty content
+                if role in ["assistant", "user", "system"] and content:
+                    result.append(Message(role=role, content=content))
+            
+            return result
+        except Exception as e:
+            logger.error(f'Error in __process_messages: {str(e)}')
+            # Fallback: process individual messages
+            result = []
+            for msg in messages:
+                try:
+                    # Extract role from LangChain message type
+                    if hasattr(msg, 'type'):
+                        lc_type = msg.type
+                        if lc_type == 'ai':
+                            role = 'assistant'
+                        elif lc_type == 'human':
+                            role = 'user'
+                        elif lc_type == 'system':
+                            role = 'system'
+                        else:
+                            role = 'user'  # default
+                        content = str(msg.content)
+                        if content:
+                            result.append(Message(role=role, content=content))
+                except Exception as msg_error:
+                    logger.warning(f'Skipping message due to error: {msg_error}')
+                    continue
+            return result
     
     async def clear_history(self,session_id:UUID) -> None:
         # clear all history that correspond the session id
         try: 
-            engine:AsyncEngine = await self._get_async_engine()
+            engine: AsyncConnectionPool = await self._get_connection_pool()
 
             if not engine:
-                raise Exception()
-            
-            async with engine.begin() as conn:
-                for table in CHCKPT_TABLE:
+                raise Exception("No DB engine")
+
+            async with engine.connection() as conn:
                     try:
-                        await conn.execute(
-                        text(f"DELETE FROM {table} WHERE thread_id = :session_id"),
-                        {"session_id": str(session_id)}
+                        table = CHCKPT_TABLE
+                        result = await conn.execute(
+                                    f"DELETE FROM {CHCKPT_TABLE} WHERE thread_id = %s",
+                                    (str(session_id),)
                         )
-                        logger.info('deleted chat history successfully')
-                    
+
+                        if result.rowcount > 0:
+                            logger.info(f"{table}: deleted  rows")
+                        else:
+                            logger.warning(f"{table}: no rows found")
+
                     except Exception as e:
-                        logger.error(f'failed to delete chat history ,error = {str(e)}')
+                        logger.error(f"{table}: delete failed, error={e}")
+                        raise 
 
         except Exception as e:
-            logger.error(f"failed_to_clear_chat_history, error=str(e)")
+            logger.error(f"failed_to_clear_chat_history, error={str(e)}")
             raise

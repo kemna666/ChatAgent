@@ -10,7 +10,7 @@ import uuid
 class User(Base):
     __tablename__ = 'users'
 
-    id = Column(UUID(as_uuid=True),primary_key=True,index=True,default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True),primary_key=True,index=True,default=lambda:uuid.uuid4())
     email = Column(String,unique=True,nullable=False)
     username = Column(String,nullable=False)
     hashed_passwd = Column(String,nullable=False)

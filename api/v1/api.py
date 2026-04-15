@@ -7,10 +7,10 @@ api_router = APIRouter()
 
 # Include routers
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
-api_router.include_router(chatbot_router, prefix="/chatbot", tags=["chatbot"])
+api_router.include_router(chatbot_router, prefix="/chat", tags=["chat"])
 
 
-@api_router.get("/health")
+@api_router.get("/health",summary='check if api can access')
 async def health_check():
     """Health check endpoint.
 

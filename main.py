@@ -13,6 +13,15 @@ from api.v1.api import api_router
 async def lifespan(app:FastAPI):
     # if tables don't exist,create it
     await database_service.create_table()
+    logger.add(
+    "logs/app_{time}.log",   # 文件路径（自动带时间）
+    rotation="10 MB",        # 单个文件最大10MB自动切分
+    retention="7 days",      # 保留7天
+    compression="zip",       # 自动压缩旧日志
+    level="INFO",            # 日志等级
+    encoding="utf-8",
+    enqueue=True             # 多进程/异步安全（非常重要）
+)
     logger.info('database has been initizlized')
     logger.info('application startup')
     yield
@@ -24,7 +33,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-
+6
 # inculude apis in api/v1
 app.include_router(api_router, prefix='/api/v1')
 

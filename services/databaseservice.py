@@ -7,17 +7,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base
 from loguru import logger
-
+import tomllib
 from models.usermodel import User
 from models.session import Base, Session as ChatSession
-
-
-db_user = 'postgres'
-db_passwd = 123456
-db_host = 'localhost'
-db_name = 'chat_db'
-
-
+from config.config import config
 
 
 
@@ -30,7 +23,7 @@ class DataBaseService:
         try:
             pool_size = 10
             max_overflow = 10
-            connection_url = f'postgresql+asyncpg://{db_user}:{db_passwd}@{db_host}/{db_name}'
+            connection_url = config.chat_db
             self.engine = create_async_engine(
                 url= connection_url,
                 pool_size=pool_size,
@@ -97,7 +90,7 @@ class DataBaseService:
         """
         async with AsyncSession(self.engine) as session:
 
-            chat_session = ChatSession(user_id=user_id,name=session_name)
+            chat_session = ChatSession(user_id=user_id,session_name=session_name)
             sessionid = chat_session.session_id
             session.add(chat_session)
             await session.commit()
@@ -148,7 +141,7 @@ class DataBaseService:
         # check if database connection health
         try:
             async with AsyncSession(self.engine) as session:
-                await session.execute(select(1)).first()
+                await session.execute(select(1))
                 return True
         except Exception as e:
             logger.error(f'database health check failed,error = {str(e)}')

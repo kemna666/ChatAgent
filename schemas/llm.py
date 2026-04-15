@@ -6,14 +6,14 @@ import re
 class GraphState(BaseModel):
     # the state definition of Langchain Agent
 
-    messages:Annotated[list[Message],add_messages] = Field(default_factory=list,description='messages')
+    messages:Annotated[list, add_messages] = Field(
+        default_factory=list, description="The messages in the conversation"
+    )
 
     long_term_memory:str = Field(default='',description='the memory in conversation')
 
 
 
-class Command(BaseModel):
-    pass
 
 
 class Message(BaseModel):
@@ -44,7 +44,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
 
-    message:list[Message] = Field(...,description='the response',min_length=1)
+    messages:list[Message] = Field(...,description='the response')
 
 class StreamResponse(BaseModel):
     # response model for streaming chat endpoint

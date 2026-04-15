@@ -12,25 +12,25 @@ class MemoryService:
     
     async def _get_memory(self) -> AsyncMemory:
         if self._memory is None:
-            self._memory = await AsyncMemory.from_config({
+            self._memory = AsyncMemory.from_config({
                  "vector_store": {
                         "provider": "pgvector",
                         "config": {
-                            "collection_name": '',
-                            "dbname": '',
-                            "user": '',
-                            "password": '',
-                            "host": '',
-                            "port": '',
+                            "collection_name": 'memories',
+                            "dbname": 'memories',
+                            "user": 'postgres',
+                            "password": '123456',
+                            "host": 'localhost',
+                            "port": '5432',
                         },
                     },
                     "llm": {
                         "provider": "openai",
-                        "config": {"model": ''},
+                        "config": {"model": 'qwen/qwen3.6-plus'},
                     },
                     "embedder": {
                         "provider": "openai",
-                        "config": {"model": ''},
+                        "config": {"model": 'qwen/qwen3.6-plus'},
                     },
                 },  
             )
@@ -39,7 +39,7 @@ class MemoryService:
     async def add_memory(self,user_id:UUID,message:List[dict],metadata:dict =None):
         # add memory to database
         try:
-            memory:AsyncMemory = self._get_memory()
+            memory:AsyncMemory = await self._get_memory()
             await memory.add(message,user_id=str(user_id),metadata=metadata)
             logger.info('memory update sucessfully')
         except Exception as e:
