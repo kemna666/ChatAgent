@@ -19,7 +19,7 @@ class MemoryService:
                         "provider": "pgvector",
                         "config": {
                             "collection_name": 'memories',
-                            "dbname": 'memories',
+                            "dbname": 'chat_db',
                             "user": 'postgres',
                             "password": '123456',
                             "host": 'localhost',

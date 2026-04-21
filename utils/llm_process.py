@@ -18,7 +18,6 @@ def dump_messages(messages: list[Message]) -> list[dict]:
     return [message.model_dump() for message in messages]
 
 def handle_response(message:Union[Message,List[Message]]) -> Message:
-    logger.debug(f'original response = {message.content}')
     text_part = []    
     if isinstance(message.content,list):
         # extract text parts
@@ -36,7 +35,6 @@ def handle_response(message:Union[Message,List[Message]]) -> Message:
                 text_part.append(block)
     else:
         text_part.append(message.content)
-    logger.debug(f'extracted text parts = {text_part}')
     message.content = ''.join(text_part)
     logger.debug(f'processed structured,response = {message.content}') 
     return message
@@ -52,7 +50,7 @@ def prepare_message(messages:List[Message],llm:BaseChatModel,system_prompt:str) 
             start_on='human',
             include_system=False,
             allow_partial= False,
-            token_counter = count_token_in_messages
+            token_counter=count_token_in_messages
         )
         result = conver_message(trimmed_message)
     except ValueError as e:
@@ -61,6 +59,7 @@ def prepare_message(messages:List[Message],llm:BaseChatModel,system_prompt:str) 
                 f'token_counting_failed_skipping_trim,error = {str(e)},message count = {len(messages)}'
             )
             trimmed_message = messages
+        
         else: 
             raise
     
@@ -80,8 +79,26 @@ def conver_message(messages:List[BaseMessage]) -> List[Message]:
                 role = "tool"
             else:
                 role = "unknown"
+            if role == 'tool':
+                logger.warning(f'detected tool msg , converting...,content = {lc_msg.content}')
+                role = "assistant"
+                lc_msg = tool_to_ai_message(lc_msg)
+            
             result.append(Message(role=role, content=lc_msg.content))
         return result
+
+
+def tool_to_ai_message(tool_msg: ToolMessage) -> AIMessage:
+# convert tool msy to ai msg
+    return AIMessage(
+        content=f"[TOOL RESULT]\n{tool_msg.content}",
+        additional_kwargs={
+            "tool_name": tool_msg.name,
+            "tool_call_id": tool_msg.tool_call_id,
+        }
+    )
+
+
 def count_token_in_messages(messages:List[Dict[str,str]]) -> int:
     # count token in messages
     encoding = tiktoken.get_encoding("cl100k_base")  

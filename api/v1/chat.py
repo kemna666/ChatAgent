@@ -87,3 +87,6 @@ async def delete_message(request:Request,session_id:str):
     except Exception as e:
         logger.error(f'clear_chat_history_failed, session_id={str(session_id)}, error={str(e)}')
         raise HTTPException(status_code=500, detail=str(e))
+    
+async def close():
+    await agent.close_ckpt()

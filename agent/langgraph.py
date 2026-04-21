@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import AsyncGenerator, List, Optional
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
@@ -68,9 +69,9 @@ class LangGraphAgent:
         # get llm info
 
         # load system prompts
-        SYSTEM_PROMPT = '你是一个猫娘，喵喵喵～'
+        SYSTEM_PROMPT = '你是一个猫娘助手，喵喵喵～，能调用工具的情况下尽量调用已有工具实现问题'
         # handle messages in advance
-
+    
         messages = prepare_message(state.messages, current_llm, SYSTEM_PROMPT)
 
         try:
@@ -90,7 +91,6 @@ class LangGraphAgent:
                 or ak.get("reasoning_content")
                 or str(ak)
             )
-            logger.debug(f'original response = {response_message.content},type={type(response_message.content)}')
             response_message = handle_response(response_message)
 
 
@@ -98,6 +98,7 @@ class LangGraphAgent:
                 goto = 'tool_call'
             else:
                 goto = END
+            logger.debug(f'goto = {goto}')
             return Command(update = {'messages':state.messages + [response_message]},goto = goto)
         
         except Exception as e:
@@ -111,7 +112,10 @@ class LangGraphAgent:
         outputs:List[ToolMessage] = []
         for tool in state.messages[-1].tool_calls:
             # ASYNC INVOKE TOOL
-            tool_result = self.tools_by_name[tool['name'].ainvoke(tool['args'])]
+            tool_result = await self.tools_by_name[tool['name']].ainvoke(tool['args'])
+            if not isinstance(tool_result, str):
+            
+                tool_result = json.dumps(tool_result, ensure_ascii=False)
             outputs.append(
                 ToolMessage(
                     content= tool_result,
@@ -119,33 +123,8 @@ class LangGraphAgent:
                     tool_call_id = tool['id']
                 )
             )
-        return Command(update={'messages':outputs},goto = 'chat')
+        return Command(update={'messages':state.messages + outputs},goto = 'chat')
     
-    async def _get_connection_pool(self) -> AsyncConnectionPool:
-        if self._connection_pool is None:
-            try:
-                # Configure pool size based on environment
-                max_size = 10
-
-                connection_url = DATABASE_URL
-
-                self._connection_pool = AsyncConnectionPool(
-                    connection_url,
-                    open=False,
-                    max_size=max_size,
-                    kwargs={
-                        "autocommit": True,
-                        "connect_timeout": 5,
-                        "prepare_threshold": None,
-                    },
-                )
-                await self._connection_pool.open()
-                logger.info(f"connection_pool_created,max_size={max_size}")
-            except Exception as e:
-                logger.error(f"connection_pool_creation_failed,error = {str(e)}")
-                # In production, we might want to degrade gracefully
-                raise e
-        return self._connection_pool
 
     async def create_graph(self) -> Optional[CompiledStateGraph]:
         # create langchain workflow
@@ -166,7 +145,6 @@ class LangGraphAgent:
                 # get the connection pool of pgsql
                 self._checkpointer_cm = AsyncPostgresSaver.from_conn_string(DATABASE_URL)
 
-                        # 手动进入 context（关键）
                 self._checkpointer = await self._checkpointer_cm.__aenter__()
 
                 await self._checkpointer.setup()
@@ -188,7 +166,9 @@ class LangGraphAgent:
         # if there is not any tool calls,end the conversation
         return END  
     
-
+    async def close_ckpt(self):
+        if hasattr(self, "_checkpointer_cm"):
+            await self._checkpointer_cm.__aexit__(None, None, None)
     
     async def get_response(self,message:List[Message],session_id:str,user_id:Optional[UUID]=None) -> List[Message]:
         # get response from llm
@@ -210,10 +190,20 @@ class LangGraphAgent:
           ) or 'No relevant memory found'
 
           try:
-              response = await self._graph.ainvoke(
-                input={"messages": dump_messages(message), "long_term_memory": relavent_memory},
-                config=config
-              )
+              state = await self._graph.aget_state(config=config)
+              logger.info('invoke model')
+              if state.next:
+                logger.info("resuming_interrupted_graph", session_id=session_id, next_nodes=state.next)
+                response = await self._graph.ainvoke(
+                    Command(resume=message[-1].content),
+                    config=config,
+                )
+              else:
+                    response = await self._graph.ainvoke(
+                        input={"messages": dump_messages(message), "long_term_memory": relavent_memory},
+                        config=config,
+                    )
+              logger.debug('remembering')
               asyncio.create_task(
                   self._update_long_term_memory(
                       user_id,
@@ -293,11 +283,9 @@ class LangGraphAgent:
         if self._graph is None:
             self._graph = await self.create_graph()
         config={"configurable": {"thread_id": session_id}}
-        logger.debug(f'history config = {config}')
         state:StateSnapshot = await self._graph.aget_state(
             config=config
         )
-        logger.debug(f'message = {state.values}')
         return await self.__process_messages(state.values['messages']) if state.values and 'messages' in state.values else []
     
     async def __process_messages(self,messages:List[Message]) -> List[Message]:
@@ -307,6 +295,9 @@ class LangGraphAgent:
             
             result = []
             for item in openai_style_messages:
+                # if it is tool message jump it
+                if (isinstance(item, dict) and item.get("role") == "tool") or (hasattr(item, "type") and getattr(item, "type", None) == "tool"):
+                    continue
                 # Check if item is a dictionary (expected format)
                 if isinstance(item, dict) and "role" in item and "content" in item:
                     role = item["role"]
@@ -331,7 +322,7 @@ class LangGraphAgent:
                 # Only add messages with supported roles and non-empty content
                 if role in ["assistant", "user", "system"] and content:
                     result.append(Message(role=role, content=content))
-            
+                
             return result
         except Exception as e:
             logger.error(f'Error in __process_messages: {str(e)}')
@@ -386,3 +377,28 @@ class LangGraphAgent:
         except Exception as e:
             logger.error(f"failed_to_clear_chat_history, error={str(e)}")
             raise
+    async def _get_connection_pool(self) -> AsyncConnectionPool:
+        if self._connection_pool is None:
+            try:
+                # Configure pool size based on environment
+                max_size = 10
+
+                connection_url = DATABASE_URL
+
+                self._connection_pool = AsyncConnectionPool(
+                    connection_url,
+                    open=False,
+                    max_size=max_size,
+                    kwargs={
+                        "autocommit": True,
+                        "connect_timeout": 5,
+                        "prepare_threshold": None,
+                    },
+                )
+                await self._connection_pool.open()
+                logger.info(f"connection_pool_created,max_size={max_size}")
+            except Exception as e:
+                logger.error(f"connection_pool_creation_failed,error = {str(e)}")
+                # In production, we might want to degrade gracefully
+                raise e
+        return self._connection_pool

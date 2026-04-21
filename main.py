@@ -5,7 +5,7 @@ from grpc import Status
 from loguru import logger
 from services.databaseservice import database_service
 from api.v1.api import api_router
-
+from api.v1.chat import close
 
 
 
@@ -25,6 +25,7 @@ async def lifespan(app:FastAPI):
     logger.info('database has been initizlized')
     logger.info('application startup')
     yield
+    await close()
     logger.info('app closed')
 
 app = FastAPI(
@@ -56,3 +57,4 @@ async def health(reauest:Request):
     status_code = status.HTTP_200_OK if db_health else status.HTTP_503_SERVICE_UNAVAILABLE
 
     return JSONResponse(content=response, status_code=status_code)
+

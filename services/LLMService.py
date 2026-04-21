@@ -161,8 +161,8 @@ class LLMService:
     def bind_tools(self,tools:List) -> "LLMService":
 
         if self._llm:
-            self._llm.bind_tools(tools)
-            logger.info('llm has bind tools successfully')
+            self._llm = self._llm.bind_tools(tools)
+            logger.info(f'llm has bind tools successfully,tool count = {len(tools)}')
         return self
     
 llmservice = LLMService()
