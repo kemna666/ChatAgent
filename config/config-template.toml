@@ -1,0 +1,18 @@
+# please change the filename to config.toml
+
+[chat-db]
+db_name = 'chat_db'
+host = "localhost"
+port = 5432
+username = "postgres"
+passwd = "123456"
+
+
+[llms]
+base_url = "you base url"
+default_model = "your-model"
+api_key = "your-api-key"
+
+[[llms.models]]
+provider = "openai"
+model = "deepseek-ai/DeepSeek-V3.2"

@@ -15,7 +15,7 @@ router = APIRouter()
 agent = LangGraphAgent()
 
 @router.post('/chat',response_model=ChatResponse)
-async def chat(request:Request,chat_request:ChatRequest,session_id:str) -> ChatResponse:
+async def chat(request:Request,chat_request:ChatRequest,session_id:str,current_user = Depends(get_current_session)) -> ChatResponse:
 
     # process a chat
     try:
@@ -36,9 +36,11 @@ async def chat(request:Request,chat_request:ChatRequest,session_id:str) -> ChatR
 async def chat_stream(
     request:Request,
     chat_request:ChatRequest,
-    session_id:str
+    session_id:str,
+    current_session = Depends(get_current_session)
 ):
     session_id = sanitize_string(session_id)
+    
     logger.info(f'stream chat request received,session id = {session_id}')
     
     return StreamingResponse(
@@ -67,7 +69,7 @@ async def event_generator(chat_request:ChatRequest,session_id:str):
 
 
 @router.get('/messages',response_model = ChatResponse,summary = 'get session message')
-async def get_messages_in_session(request:Request,session_id:str) -> ChatResponse:
+async def get_messages_in_session(request:Request,session_id:str,current_session = Depends(get_current_session)) -> ChatResponse:
     try:
         session_id = sanitize_string(session_id)
         logger.info(f'get messages in session,session id = {session_id}')
@@ -79,7 +81,7 @@ async def get_messages_in_session(request:Request,session_id:str) -> ChatRespons
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete('/messages',summary='delete message')
-async def delete_message(request:Request,session_id:str):
+async def delete_message(request:Request,session_id:str,current_session = Depends(get_current_session)):
     try:
         session_id = sanitize_string(session_id)
         await agent.clear_history(session_id)

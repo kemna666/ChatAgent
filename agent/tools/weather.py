@@ -3,6 +3,7 @@ import json
 from langchain_core.tools import tool
 import httpx
 from loguru import logger
+import re
 # the api addr
 api_addr = 'http://t.weather.itboy.net/api/weather/city/'
 
@@ -12,14 +13,15 @@ async def weather(city:str) -> dict:
     get the weather of a city
 
     Args: 
-        city:str
+        city:str,must be a city or urban district,if name have "市", kick out the "市" character; if have "省",only keep the characters after "省" and kict out the charater of "市"
 
     Returns :
         dict:
             the weather of the city
     '''
     
-    
+    city = re.sub(r"[省市县区镇乡街道]$", "", city)
+    city.strip()
     city_code = await get_citycode(city)
     logger.debug(f'wetacher tool called,city code = {str(city_code)}')
     async with httpx.AsyncClient() as client:

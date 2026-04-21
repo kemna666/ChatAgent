@@ -36,7 +36,6 @@ def handle_response(message:Union[Message,List[Message]]) -> Message:
     else:
         text_part.append(message.content)
     message.content = ''.join(text_part)
-    logger.debug(f'processed structured,response = {message.content}') 
     return message
 
 def prepare_message(messages:List[Message],llm:BaseChatModel,system_prompt:str) -> List[Message]:
@@ -80,7 +79,7 @@ def conver_message(messages:List[BaseMessage]) -> List[Message]:
             else:
                 role = "unknown"
             if role == 'tool':
-                logger.warning(f'detected tool msg , converting...,content = {lc_msg.content}')
+                logger.warning(f'detected tool msg , converting...')
                 role = "assistant"
                 lc_msg = tool_to_ai_message(lc_msg)
             

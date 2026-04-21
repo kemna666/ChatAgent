@@ -66,7 +66,7 @@ async def get_current_session(session_id:str,credentials:HTTPAuthorizationCreden
         token = sanitize_string(credentials.credentials)
 
         user_id = verify_token(token)
-
+        logger.debug('session checking')
         if session_id is None:
             logger.error('session id not found')
             raise HTTPException(
@@ -91,7 +91,7 @@ async def get_current_session(session_id:str,credentials:HTTPAuthorizationCreden
                 detail='session not belong to user',
                 headers={"WWW-Authenticate":"Bearer"}
             )
-
+        logger.debug('session check passed')
         return session
     
     except ValueError as e:
