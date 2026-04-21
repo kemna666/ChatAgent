@@ -71,7 +71,7 @@ async def get_messages_in_session(request:Request,session_id:str) -> ChatRespons
     try:
         session_id = sanitize_string(session_id)
         logger.info(f'get messages in session,session id = {session_id}')
-        messages = await agent.get_chat_history(session_id=UUID(session_id))
+        messages = await agent.get_chat_history(session_id=session_id)
         return ChatResponse(messages=messages)
     
     except Exception as e:
@@ -82,7 +82,7 @@ async def get_messages_in_session(request:Request,session_id:str) -> ChatRespons
 async def delete_message(request:Request,session_id:str):
     try:
         session_id = sanitize_string(session_id)
-        await agent.clear_history(UUID(session_id))
+        await agent.clear_history(session_id)
         return {"message": "Chat history cleared successfully"}
     except Exception as e:
         logger.error(f'clear_chat_history_failed, session_id={str(session_id)}, error={str(e)}')
