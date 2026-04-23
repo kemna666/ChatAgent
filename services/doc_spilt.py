@@ -72,17 +72,6 @@ class DocHandler:
     async def save(self,split_docs:List[Document]) -> None:
         batch = []
         pending_tasks = []
-        semaphore = asyncio.Semaphore(10)
-        async def flush_batch(b):
-            if not b:
-                return
-            async with semaphore:
-                try:
-                # 同步方法 → 放入线程池
-                    await asyncio.to_thread(self.vector_db.add_documents, b)
-                    logger.info(f"succeeded, {len(batch)} docs")
-                except Exception as e:
-                    logger.error(f"failed: {e}")
         # load embedding model
         if not split_docs:
             logger.error('no docs included')
@@ -102,14 +91,14 @@ class DocHandler:
                 continue
             batch.append(doc)
             if len(batch) >= 20:
-                pending_tasks.append(flush_batch(batch))
+                pending_tasks.append(self.flush_batch(batch))
                 batch = []
                 # 控制并发任务数量，避免任务列表无限增长
                 if len(pending_tasks) >= 10:
                     await asyncio.gather(*pending_tasks)
                     pending_tasks.clear()
         if batch:
-            pending_tasks.append(flush_batch(batch))
+            pending_tasks.append(self.flush_batch(batch))
         if pending_tasks:
             await asyncio.gather(*pending_tasks)
             
@@ -121,7 +110,7 @@ class DocHandler:
             logger.warning('query not set')
             return []
         try:
-            doc = await self.vector_db.asimilarity_search(query=query,k = top_k)
+            doc = await self.vector_db.asimilarity_search_with_relevance_scores(query=query,k = top_k,score_threshold = 0.5)
             logger.success(f'searched {len(doc)}')
         except Exception as e:
             logger.error(f'search doc error = {str(e)}')
@@ -139,14 +128,24 @@ class DocHandler:
         )
     async def store_doc(self):
         try:
-            docs = doc_handler.read_doc()
-            doc_list = doc_handler.spilt_document(docs)
-            await doc_handler.save(doc_list)
+            docs = self.read_doc()
+            doc_list = self.spilt_document(docs)
+            await self.save(doc_list)
             #doc_handler.save([test])
             logger.success('SUCCESSFULLY SAVED DOC')
         except Exception as e:
             logger.error(f'error:{str(e)}\n traceback = {traceback.format_exc()}')
 
-
+    async def flush_batch(self,b):
+            semaphore = asyncio.Semaphore(10)
+            if not b:
+                return
+            async with semaphore:
+                try:
+                # 同步方法 → 放入线程池
+                    await asyncio.to_thread(self.vector_db.add_documents, b)
+                    logger.info(f"succeeded, {len(b)} docs")
+                except Exception as e:
+                    logger.error(f"failed: {e}")
 
 doc_handler = DocHandler()

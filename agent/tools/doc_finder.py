@@ -6,7 +6,7 @@ from services.doc_spilt import doc_handler
 
 @tool
 
-async def doc_searcher(query:str,top_k:int = 3) -> str:
+async def doc_searcher(query:str,top_k:int = 10) -> str:
     '''
     find query in local doc
 
@@ -21,11 +21,11 @@ async def doc_searcher(query:str,top_k:int = 3) -> str:
 
     formatted_result = []
 
-    for i,doc in enumerate(result,1):
+    for i, (doc, score) in enumerate(result):
         formatted_result.append(
-            f'results:{i}\n'
-            f'source:{doc.metadata['filename']}\n'
-            f'chunk:{doc.page_content[:300]}'
+            f"results:{i}\n"
+            f"source:{doc.metadata['source']}\n"
+            f"chunk:{doc.page_content[:300]}"
         )
     
     return '\n'.join(formatted_result) if formatted_result else 'no relavent content'
