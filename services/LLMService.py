@@ -34,7 +34,7 @@ class LLMRegistry:
             **kwargs
         })
         cls.create_llm(model_name,provider)
-        logger.info(f'LLM Registered:{model_name}')
+        logger.success(f'LLM Registered:{model_name}')
 
     @classmethod
     def get_all_model_names(cls) -> List[str]:
@@ -57,7 +57,7 @@ class LLMRegistry:
             base_url = cls.__base_url__,
             max_tokens = cls._max_token,
         )
-        logger.info(f'LLM Created:{model_name}')
+        logger.success(f'LLM Created:{model_name}')
         return cls._instances[model_name]
     
     @classmethod
@@ -77,7 +77,7 @@ class LLMService:
         try:
             self.current_model = self.default_model
             self._llm = LLMRegistry.get(self.default_model)
-            logger.info(f'model has been initialized,model name:{self.current_model}')
+            logger.success(f'model has been initialized,model name:{self.current_model}')
         except (ValueError,Exception) as e:
             logger.error(f'model has not been initialized successfully,error:{str(e)}')
         
@@ -88,7 +88,7 @@ class LLMService:
                 for i,model in enumerate(config.llms['models']):
                     provider = model['provider']
                     LLMRegistry.register(model['model'],provider)
-                    logger.info(f'model has been registered,model name:{model["model"]},provider:{provider}')
+                    logger.success(f'model has been registered,model name:{model["model"]},provider:{provider}')
         except Exception as e:
             logger.error(f'model registration failed,error = {str(e)},{config.llms["models"]}')
     
@@ -120,7 +120,7 @@ class LLMService:
 
         try:
             response = await self._llm.ainvoke(messages)
-            logger.debug("llm_call_successful", message_count=len(messages))
+            logger.success("llm_call_successful", message_count=len(messages))
             return response
         except (RateLimitError, APITimeoutError, APIError) as e:
             logger.warning(
@@ -162,7 +162,7 @@ class LLMService:
 
         if self._llm:
             self._llm = self._llm.bind_tools(tools)
-            logger.info(f'llm has bind tools successfully,tool count = {len(tools)}')
+            logger.success(f'llm has bind tools successfully,tool count = {len(tools)}')
         return self
     
 llmservice = LLMService()

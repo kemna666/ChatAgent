@@ -37,7 +37,7 @@ class MemoryService:
                     "embedder": {
                         "provider": "openai",
                         "config": {
-                            "model": "BAAI/bge-m3",  # 必须用嵌入模型
+                            "model": "BAAI/bge-large-zh-v1.5",  # 必须用嵌入模型
                             "api_key": self._api_key,
                             "openai_base_url": self._base_url
                         }

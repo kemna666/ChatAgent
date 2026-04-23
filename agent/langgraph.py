@@ -1,5 +1,6 @@
 import asyncio
 import json
+import traceback
 from typing import AsyncGenerator, List, Optional
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
@@ -40,7 +41,7 @@ class LangGraphAgent:
         self.memory_service = memory_service
         self.tools_by_name = {tool.name: tool for tool in tools}
         self._connection_pool:Optional[AsyncConnectionPool] = None
-        logger.info('agent has been initialized')
+        logger.success('agent has been initialized')
     
     async def _get_memory(self,user_id:UUID,query:str) ->str:
         # get relevant memory about th query for user
@@ -219,7 +220,7 @@ class LangGraphAgent:
                   logger.warning(f'no assistant message found in response')
                   return []
           except Exception as e:
-              logger.error(f'error to get response,error = {str(e)}')
+              logger.error(f'error to get response,error = {str(e)}\n{traceback.format_exc()}')
               return []
 
     async def get_stream_response(self,messages:List[Message],session_id:UUID,user_id:Optional[str] = None) -> AsyncGenerator[str,None]:

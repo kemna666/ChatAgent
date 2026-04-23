@@ -134,7 +134,7 @@ class DataBaseService:
             session.add(chat_session)
             await session.commit()
             await session.refresh(chat_session)
-            logger.info('successfully updated the session name')
+            logger.success('successfully updated the session name')
             return chat_session
     
     async def check_health(self) -> bool:

@@ -209,7 +209,7 @@ async def delete_session(session_id:str,user:User = Depends(get_current_user)):
         
         await db_service.delete_session(session_id)
 
-        logger.info('successful deleted a session')
+        logger.success('successful deleted a session')
 
     except ValueError as ve:
 

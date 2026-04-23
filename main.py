@@ -6,7 +6,8 @@ from loguru import logger
 from services.databaseservice import database_service
 from api.v1.api import api_router
 from api.v1.chat import close
-
+from config.config import config
+from services.doc_spilt import doc_handler
 
 
 # initialize env before app start
@@ -24,6 +25,8 @@ async def lifespan(app:FastAPI):
 )
     logger.info('database has been initizlized')
     logger.info('application startup')
+    if config.doc_version == 1:
+        await doc_handler.store_doc()
     yield
     await close()
     logger.info('app closed')
