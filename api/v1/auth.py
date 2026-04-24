@@ -178,7 +178,7 @@ async def create_session(
         logger.error("session_creation_validation_failed", error=str(ve), user_id=user.id, exc_info=True)
         raise HTTPException(status_code=422, detail=str(ve))
     
-@router.patch('/session/{session_id}/name',response_model=SessionResponse,summary='update the name of session')
+@router.patch('/session/name',response_model=SessionResponse,summary='update the name of session')
 async def update_session_name(session_id:str,name:str = Form(...)):
     try:
         name = sanitize_string(name)
@@ -196,7 +196,7 @@ async def update_session_name(session_id:str,name:str = Form(...)):
         raise HTTPException(status_code=422,detail=str(ve))
     
 
-@router.delete('/session/{session_id}',summary='delete a session')
+@router.delete('/session',summary='delete a session')
 async def delete_session(session_id:str,user:User = Depends(get_current_user)):
     try:
         session_id = sanitize_string(session_id)
@@ -237,3 +237,38 @@ async def get_sessions(user:User = Depends(get_current_user)):
         raise HTTPException(
             status_code=422,detail=str(ve)
         )
+
+@router.patch('/passwd/change',summary='change passsword')
+async def change_passwd(old_passwd:str,new_passwd:str,user:User = Depends(get_current_user)):
+    old_passwd = sanitize_string(old_passwd)
+    new_passwd = sanitize_string(new_passwd)
+    user = await db_service.change_passwd(user.email,old_passwd=old_passwd,new_passwd=new_passwd)
+    token = create_access_token(user.id)
+    return UserResponse(
+            user.id,
+            user.email,
+            token= token.access_token
+        )
+
+@router.get('/verify_code',summary='get the verify_code')
+async def get_verify_code(email:str):
+    pass
+
+@router.post('/passwd/forget',summary='forget the passwd')
+async def forget_passwd(email:str,new_passwd:str,verify_code:str) -> UserResponse:
+    new_passwd = sanitize_string(new_passwd)
+    user = db_service.get_user_by_email(email)
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail='user not found'
+        )
+    # receive access code and change passwd
+
+
+    token = create_access_token(user)
+    return UserResponse(
+        user.id,
+        user.email,
+        token=token.access_token
+    )
