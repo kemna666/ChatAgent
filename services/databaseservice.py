@@ -150,14 +150,14 @@ class DataBaseService:
     async def change_passwd(self,email:str,old_passwd:Optional[str],new_passwd:str) -> User:
         try:
             user:User = await self.get_user_by_email()
-            if old_passwd and user.hash_passwd(old_passwd) != user.hashed_passwd:
+            if old_passwd and old_passwd != user.hashed_passwd:
                 logger.error('user paawd is not match,failed')
                 raise HTTPException(
                     status_code=401,
                     detail='passwd incorrect'
                 )
             async with AsyncSession(self.engine) as session:
-                user.hashed_passwd = user.hash_passwd(new_passwd)
+                user.hashed_passwd = new_passwd
                 session.add(user)
                 await session.commit()
                 await session.flush(user)

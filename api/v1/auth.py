@@ -10,11 +10,11 @@ from schemas.userschema import SessionResponse, Token, UserCreate, UserResponse
 from services.databaseservice import DataBaseService
 from utils.auth import create_access_token, verify_token
 from utils.sanitization import sanitize_string
-
+from services.cache_redis import cache_service
 
 router = APIRouter()
 security = HTTPBearer()
-db_service = DataBaseService()
+db_service = cache_service
 
 
 async def get_current_user(
@@ -242,7 +242,7 @@ async def get_sessions(user:User = Depends(get_current_user)):
 async def change_passwd(old_passwd:str,new_passwd:str,user:User = Depends(get_current_user)):
     old_passwd = sanitize_string(old_passwd)
     new_passwd = sanitize_string(new_passwd)
-    user = await db_service.change_passwd(user.email,old_passwd=old_passwd,new_passwd=new_passwd)
+    user = await db_service.change_passwd(user.email,old_passwd=old_passwd,new_passwd=User.hash_passwd(new_passwd))
     token = create_access_token(user.id)
     return UserResponse(
             user.id,
@@ -257,6 +257,7 @@ async def get_verify_code(email:str):
 @router.post('/passwd/forget',summary='forget the passwd')
 async def forget_passwd(email:str,new_passwd:str,verify_code:str) -> UserResponse:
     new_passwd = sanitize_string(new_passwd)
+    new_passwd = User.hash_passwd(new_passwd)
     user = db_service.get_user_by_email(email)
     if not user:
         raise HTTPException(
