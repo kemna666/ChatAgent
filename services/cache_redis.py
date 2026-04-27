@@ -2,7 +2,7 @@
 
 
 import json
-from typing import Optional
+from typing import List, Optional
 from loguru import logger
 from redis import asyncio as aioredis
 from sqlalchemy.dialects.postgresql import UUID

@@ -17,8 +17,8 @@ class User(Base):
     created_at = Column(DateTime(timezone=True),default=lambda:datetime.now(timezone(timedelta(hours=8))))
     sessions = relationship("Session",back_populates="user")
 
-    def verify_passwd(self,passwd:str)->bool:
-        return bcrypt.checkpw(passwd.encode('utf-8')).decode('utf-8')
+    def verify_passwd(self, passwd: str) -> bool:
+        return bcrypt.checkpw(passwd.encode('utf-8'), self.hashed_passwd.encode('utf-8'))
 
     @staticmethod
     def hash_passwd(passwd:str) -> str:

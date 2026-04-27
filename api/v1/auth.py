@@ -74,9 +74,11 @@ async def get_current_session(session_id:str,credentials:HTTPAuthorizationCreden
                 detail='invaild session',
                 headers={"WWW-Authenticate":"Bearer"}
             )
-        user_id = UUID(user_id) 
+        user_id = UUID(user_id)
+        # 将 session_id 转换为 UUID 类型
+        session_uuid = UUID(session_id)
 
-        session = await db_service.get_session(session_id)
+        session = await db_service.get_session(session_uuid)
         if session is None:
             logger.error('session_not_found')
             raise HTTPException(
@@ -84,7 +86,7 @@ async def get_current_session(session_id:str,credentials:HTTPAuthorizationCreden
                 detail='session not found',
                 headers = {"WWW-Authenticate":"Bearer"}
             )
-        if session.user_id != user_id:
+        if str(session.user_id) != str(user_id):
             logger.error('session not belong to user')
             raise HTTPException(
                 status_code=401,
@@ -146,6 +148,13 @@ async def login(
                     detail="Incorrect email or password",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+        # 验证密码
+        if not user.verify_passwd(form_data.password):
+            raise HTTPException(
+                    status_code=401,
+                    detail="Incorrect email or password",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
         logger.info(f'{str(user.username)} logging')
         token = create_access_token(str(user.id))
         return Token(access_token=token.access_token,token_type='bearer',expires_at=token.expires_at)
@@ -179,18 +188,25 @@ async def create_session(
         raise HTTPException(status_code=422, detail=str(ve))
     
 @router.patch('/session/name',response_model=SessionResponse,summary='update the name of session')
-async def update_session_name(session_id:str,name:str = Form(...)):
+async def update_session_name(session_id:str,name:str = Form(...),user:User = Depends(get_current_user)):
     try:
         name = sanitize_string(name)
-        current_session = await get_current_session()
-        if session_id != current_session.session_id:
+        session_id = sanitize_string(session_id)
+        session_uuid = UUID(session_id)
+        
+        # 获取 session 并验证属于当前用户
+        session = await db_service.get_session(session_uuid)
+        if session is None:
+            raise HTTPException(status_code=404,detail='session not found')
+        
+        if session.user_id != user.id:
             raise HTTPException(status_code=403,detail='can not modify other session')
         
-        session = await db_service.update_session_name(session_id,name)
+        updated_session = await db_service.update_session_name(session_uuid,name)
 
-        token = create_access_token(session)
+        token = create_access_token(str(updated_session.session_id)).access_token
 
-        return SessionResponse(session.session_id,name,token)
+        return SessionResponse(session_id=updated_session.session_id,name=updated_session.session_name,token=token)
     except ValueError as ve:
         logger.error('unable to update session name')
         raise HTTPException(status_code=422,detail=str(ve))
@@ -200,19 +216,22 @@ async def update_session_name(session_id:str,name:str = Form(...)):
 async def delete_session(session_id:str,user:User = Depends(get_current_user)):
     try:
         session_id = sanitize_string(session_id)
-        current_session = await get_current_session(session_id=session_id)
-        if current_session is None:
+        session_uuid = UUID(session_id)
+        
+        # 从数据库获取 session
+        session = await db_service.get_session(session_uuid)
+        if session is None:
             raise HTTPException(status_code=404,detail='session not found')
         
-        if current_session.user_id != user.id:
+        # 验证 session 属于当前用户
+        if session.user_id != user.id:
             raise HTTPException(status_code=403,detail='can not delete other sessions')
         
-        await db_service.delete_session(session_id)
+        await db_service.delete_session(session_uuid)
 
         logger.success('successful deleted a session')
 
     except ValueError as ve:
-
         logger.error(f'failed to delete session,because:{str(ve)}')
         raise HTTPException(
             status_code=422,detail=str(ve)
