@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { FiMail, FiLock } from 'react-icons/fi';
 import { apiService } from '../services/api';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface LoginPageProps {
   setIsAuthenticated: (value: boolean) => void;
 }
 
 export default function LoginPage({ setIsAuthenticated }: LoginPageProps) {
+  const { t } = useLanguage();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -19,7 +21,7 @@ export default function LoginPage({ setIsAuthenticated }: LoginPageProps) {
     setError('');
 
     if (!email || !password) {
-      setError('Email and password are required');
+      setError(t('loginMissingFields'));
       return;
     }
 
@@ -31,10 +33,10 @@ export default function LoginPage({ setIsAuthenticated }: LoginPageProps) {
         setIsAuthenticated(true);
         navigate('/chat');
       } else {
-        setError('Authentication failed. Please try again.');
+        setError(t('loginAuthFailed'));
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Login failed');
+      setError(err.response?.data?.detail || t('loginFailed'));
     } finally {
       setLoading(false);
     }
@@ -54,7 +56,7 @@ export default function LoginPage({ setIsAuthenticated }: LoginPageProps) {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Email
+              {t('emailLabel')}
             </label>
             <div className="relative">
               <FiMail className="absolute left-3 top-3 text-gray-400" />
@@ -63,14 +65,14 @@ export default function LoginPage({ setIsAuthenticated }: LoginPageProps) {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="your@email.com"
+                placeholder={t('emailPlaceholder')}
               />
             </div>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Password
+              {t('passwordLabel')}
             </label>
             <div className="relative">
               <FiLock className="absolute left-3 top-3 text-gray-400" />
@@ -79,7 +81,7 @@ export default function LoginPage({ setIsAuthenticated }: LoginPageProps) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="••••••••••"
+                placeholder={t('passwordPlaceholder')}
               />
             </div>
           </div>
@@ -89,14 +91,14 @@ export default function LoginPage({ setIsAuthenticated }: LoginPageProps) {
             disabled={loading}
             className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white font-semibold py-2 px-4 rounded-lg transition mt-6"
           >
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? t('signingIn') : t('signIn')}
           </button>
         </form>
 
         <p className="text-center text-gray-600 text-sm mt-6">
-          Don't have an account?{' '}
+          {t('noAccount')}{' '}
           <Link to="/register" className="text-blue-500 hover:text-blue-700 font-semibold">
-            Sign Up
+            {t('signUp')}
           </Link>
         </p>
       </div>

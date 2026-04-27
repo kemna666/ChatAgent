@@ -1,11 +1,11 @@
 import asyncio
 import json
 import traceback
-from typing import AsyncGenerator, List, Optional
+from typing import Any, AsyncGenerator, List, Optional, Sequence
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
 from sqlalchemy.ext.asyncio import AsyncEngine
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import BaseMessage, RemoveMessage, ToolMessage
 from schemas.llm import GraphState
 from utils.llm_process import dump_messages, handle_response, prepare_message
 from services.LLMService import llmservice
@@ -15,7 +15,6 @@ from mem0 import AsyncMemory
 from langgraph.graph.state import CompiledStateGraph,Command, RunnableConfig
 from sqlalchemy.dialects.postgresql import UUID
 from schemas.llm import Message
-from langchain_core.messages import convert_to_openai_messages
 from langgraph.graph import StateGraph,END
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver 
 from services.memory import memory_service
@@ -43,23 +42,146 @@ class LangGraphAgent:
         self._connection_pool:Optional[AsyncConnectionPool] = None
         logger.success('agent has been initialized')
     
-    async def _get_memory(self,user_id:UUID,query:str) ->str:
-        # get relevant memory about th query for user
+    async def _get_session_memory(self,session_id:str,query:str) ->str:
+        # get relevant memory only within the current session
         try:
-            # if memory is not initialized , initialize it
-            return await self.memory_service.search(user_id=user_id,query=query)
+            return await self.memory_service.search(session_id=session_id,query=query)
         except Exception as e:
             logger.error(f'failed to get memory,error = {str(e)}')
             return ''
-    
-    async def _update_long_term_memory(self,user_id:UUID,messages:List[dict],metadata:dict) -> None:
-        # update memory through user's messages
-        try:
-            await self.memory_service.add_memory(user_id=user_id,message=messages,metadata=metadata)
-        except Exception as e:
-            logger.exception(
-                f'failed to update memory',user_id,error=str(e)
+
+    def _message_role(self, message: Any) -> Optional[str]:
+        raw_role = None
+        if isinstance(message, dict):
+            raw_role = message.get("role") or message.get("type")
+        else:
+            raw_role = getattr(message, "type", getattr(message, "role", None))
+
+        role_map = {
+            "human": "user",
+            "ai": "assistant",
+            "system": "system",
+            "tool": "tool",
+            "user": "user",
+            "assistant": "assistant",
+        }
+        return role_map.get(str(raw_role), None)
+
+    def _message_content(self, message: Any) -> str:
+        content = message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")
+        if isinstance(content, list):
+            blocks = []
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        blocks.append(str(block.get("text", "")))
+                    elif "content" in block:
+                        blocks.append(str(block.get("content", "")))
+                else:
+                    blocks.append(str(block))
+            return "".join(blocks)
+        return str(content or "")
+
+    def _extract_memory_ids(self, message: BaseMessage) -> List[str]:
+        additional_kwargs = dict(getattr(message, "additional_kwargs", {}) or {})
+        memory_ids = additional_kwargs.get("memory_ids", [])
+        if isinstance(memory_ids, list):
+            return [str(memory_id) for memory_id in memory_ids if memory_id]
+        return []
+
+    async def _sync_message_memories(
+        self,
+        session_id: str,
+        messages: Sequence[Any],
+        config: RunnableConfig,
+    ) -> None:
+        if self._graph is None or not messages:
+            return
+
+        pending_messages: List[BaseMessage] = []
+        for message in reversed(list(messages)):
+            if not isinstance(message, BaseMessage):
+                continue
+
+            role = self._message_role(message)
+            if role == "tool":
+                continue
+            if role not in {"user", "assistant"}:
+                if pending_messages:
+                    break
+                continue
+
+            additional_kwargs = dict(getattr(message, "additional_kwargs", {}) or {})
+            if additional_kwargs.get("memory_synced") or additional_kwargs.get("memory_ids") is not None:
+                if pending_messages:
+                    break
+                continue
+
+            if not getattr(message, "id", None) or not self._message_content(message).strip():
+                if pending_messages:
+                    break
+                continue
+
+            pending_messages.append(message)
+
+        if not pending_messages:
+            return
+
+        updates: List[BaseMessage] = []
+        for message in reversed(pending_messages):
+            role = self._message_role(message)
+            content = self._message_content(message).strip()
+
+            try:
+                memory_ids = await self.memory_service.add_memory(
+                    session_id=session_id,
+                    message=[{"role": role, "content": content}],
+                    metadata={
+                        "message_id": str(message.id),
+                        "role": role,
+                    },
+                    infer=False,
+                )
+            except Exception as memory_error:
+                logger.warning(
+                    f"failed_to_sync_message_memory,error={str(memory_error)},session_id={session_id},message_id={getattr(message, 'id', None)}"
+                )
+                continue
+
+            additional_kwargs = dict(getattr(message, "additional_kwargs", {}) or {})
+            additional_kwargs["memory_ids"] = memory_ids
+            additional_kwargs["memory_synced"] = True
+            updates.append(
+                message.model_copy(
+                    update={"additional_kwargs": additional_kwargs}
+                )
             )
+
+        if updates:
+            await self._graph.aupdate_state(
+                config,
+                {"messages": updates},
+                as_node="chat",
+            )
+
+    def _build_system_prompt(self, session_memory: str) -> str:
+        base_prompt = (
+            '你是一个猫娘助手，喵喵喵～，能调用工具的情况下尽量调用已有工具实现问题。'
+            '调用工具后，必须基于工具结果给出完整结论，不要只输出检索过程、results 列表、'
+            'source/chunk 原文片段或原始 tool 返回。'
+            '如果回答因为各种原因不得不截断，必须提醒用户，如果可以继续，也要提醒用户'
+        )
+        memory_block = session_memory.strip()
+
+        if not memory_block or memory_block == 'No relevant memory found':
+            return base_prompt
+
+        return (
+            f"{base_prompt}\n\n"
+            "以下是当前对话的会话记忆，仅对当前 session 生效，"
+            "不要把它当作跨会话长期记忆；如果与用户最新消息冲突，以最新消息为准。\n"
+            f"{memory_block}"
+        )
     
     async def _chat(self,state:GraphState,config:RunnableConfig) -> Command:
         #process message and generate a response
@@ -70,7 +192,7 @@ class LangGraphAgent:
         # get llm info
 
         # load system prompts
-        SYSTEM_PROMPT = '你是一个猫娘助手，喵喵喵～，能调用工具的情况下尽量调用已有工具实现问题'
+        SYSTEM_PROMPT = self._build_system_prompt(state.session_memory)
         # handle messages in advance
     
         messages = prepare_message(state.messages, current_llm, SYSTEM_PROMPT)
@@ -171,82 +293,75 @@ class LangGraphAgent:
         if hasattr(self, "_checkpointer_cm"):
             await self._checkpointer_cm.__aexit__(None, None, None)
     
-    async def get_response(self,message:List[Message],session_id:str,user_id:Optional[UUID]=None) -> List[Message]:
+    async def get_response(self,message:List[Message],session_id:str) -> List[Message]:
         # get response from llm
-          if self._graph is None:
-              await self.create_graph()
-          config = {
+        if self._graph is None:
+            await self.create_graph()
+        config = {
             "configurable": {"thread_id": session_id},
             "callbacks": [],
             "metadata": {
-                "user_id": user_id,
                 "session_id": session_id,
                 "environment": '',
                 "debug": '',
             },
         }
-          logger.debug(f'config = {config}')
-          relavent_memory = (
-              await self._get_memory(user_id,message[-1].content)
-          ) or 'No relevant memory found'
+        logger.debug(f'config = {config}')
+        session_memory = (
+            await self._get_session_memory(session_id,message[-1].content)
+        ) or 'No relevant memory found'
 
-          try:
-              state = await self._graph.aget_state(config=config)
-              logger.info('invoke model')
-              if state.next:
+        try:
+            state = await self._graph.aget_state(config=config)
+            logger.info('invoke model')
+            if state.next:
                 logger.info("resuming_interrupted_graph", session_id=session_id, next_nodes=state.next)
                 response = await self._graph.ainvoke(
                     Command(resume=message[-1].content),
                     config=config,
                 )
-              else:
-                    response = await self._graph.ainvoke(
-                        input={"messages": dump_messages(message), "long_term_memory": relavent_memory},
-                        config=config,
-                    )
-              logger.debug('remembering')
-              asyncio.create_task(
-                  self._update_long_term_memory(
-                      user_id,
-                      convert_to_openai_messages(response['messages']),
-                      config['metadata']
-                  )
-              )
-              r = await self.__process_messages(response['messages'])
-              assistant_message = [msg for msg in r if msg.role == 'assistant']
-              if assistant_message:
-                  return [assistant_message[-1]]
-              else:
-                  logger.warning(f'no assistant message found in response')
-                  return []
-          except Exception as e:
-              logger.error(f'error to get response,error = {str(e)}\n{traceback.format_exc()}')
-              return []
+            else:
+                response = await self._graph.ainvoke(
+                    input={"messages": dump_messages(message), "session_memory": session_memory},
+                    config=config,
+                )
+            logger.debug('remembering')
+            await self._sync_message_memories(
+                session_id,
+                response["messages"],
+                config,
+            )
+            r = await self.__process_messages(response['messages'])
+            assistant_message = [msg for msg in r if msg.role == 'assistant']
+            if assistant_message:
+                return [assistant_message[-1]]
 
-    async def get_stream_response(self,messages:List[Message],session_id:UUID,user_id:Optional[str] = None) -> AsyncGenerator[str,None]:
+            logger.warning('no assistant message found in response')
+            return []
+        except Exception as e:
+            logger.error(f'error to get response,error = {str(e)}\n{traceback.format_exc()}')
+            return []
+
+    async def get_stream_response(self,messages:List[Message],session_id:str) -> AsyncGenerator[str,None]:
         # get a stream response from LLM
         config = {
             "configurable": {"thread_id": str(session_id)},
             "callbacks": [],
             "metadata": {
-                "user_id": str(user_id),
                 "session_id": str(session_id),
             },
         }
         if self._graph is None:
-                self._graph =await self.create_graph()
+            self._graph = await self.create_graph()
         try:
             state = await self._graph.aget_state(config)
             
-            relevant_memory = await memory_service.search(user_id, messages[-1].content) or 'No relevant memory found'
+            session_memory = await self._get_session_memory(str(session_id), messages[-1].content) or 'No relevant memory found'
             if  state and state.next:
                 logger.info('resuming interupted graph stream')
                 graph_input = Command(resume=messages[-1].content)
             else:
-                relevant_memory = (
-                    await memory_service.search(user_id,messages[-1].content)
-                ) or 'No relevant memory found'
-                graph_input =  {"messages": dump_messages(messages), "long_term_memory": relevant_memory}
+                graph_input =  {"messages": dump_messages(messages), "session_memory": session_memory}
                 logger.debug(f'graph_input = {graph_input}')
 
              
@@ -265,9 +380,11 @@ class LangGraphAgent:
                 yield str(interrupt_value)
 
             elif state.values and 'messages' in state.values:
-                # add memory for user 
-                asyncio.create_task(
-                    memory_service.add_memory(user_id,convert_to_openai_messages(state.values['messages']),config['metadata'])
+                # update memory for the current session
+                await self._sync_message_memories(
+                    str(session_id),
+                    state.values['messages'],
+                    config,
                 )
             
         except GraphInterrupt:
@@ -291,39 +408,18 @@ class LangGraphAgent:
     
     async def __process_messages(self,messages:List[Message]) -> List[Message]:
         try:
-            # Convert LangChain messages to OpenAI-style format
-            openai_style_messages = convert_to_openai_messages(messages)
-            
             result = []
-            for item in openai_style_messages:
-                # if it is tool message jump it
-                if (isinstance(item, dict) and item.get("role") == "tool") or (hasattr(item, "type") and getattr(item, "type", None) == "tool"):
+            for item in messages:
+                role = self._message_role(item)
+                content = self._message_content(item)
+                message_id = item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
+
+                if role == "tool":
                     continue
-                # Check if item is a dictionary (expected format)
-                if isinstance(item, dict) and "role" in item and "content" in item:
-                    role = item["role"]
-                    content = str(item["content"])
-                # Otherwise, it might be a LangChain message object
-                elif hasattr(item, 'type') and hasattr(item, 'content'):
-                    # Map LangChain message type to our role
-                    lc_type = getattr(item, 'type', '')
-                    if lc_type == 'ai':
-                        role = 'assistant'
-                    elif lc_type == 'human':
-                        role = 'user'
-                    elif lc_type == 'system':
-                        role = 'system'
-                    else:
-                        role = 'user'  # default
-                    content = str(item.content)
-                else:
-                    # Skip items that don't match expected formats
-                    continue
-                
-                # Only add messages with supported roles and non-empty content
+
                 if role in ["assistant", "user", "system"] and content:
-                    result.append(Message(role=role, content=content))
-                
+                    result.append(Message(role=role, content=content, id=str(message_id) if message_id else None))
+
             return result
         except Exception as e:
             logger.error(f'Error in __process_messages: {str(e)}')
@@ -331,24 +427,49 @@ class LangGraphAgent:
             result = []
             for msg in messages:
                 try:
-                    # Extract role from LangChain message type
-                    if hasattr(msg, 'type'):
-                        lc_type = msg.type
-                        if lc_type == 'ai':
-                            role = 'assistant'
-                        elif lc_type == 'human':
-                            role = 'user'
-                        elif lc_type == 'system':
-                            role = 'system'
-                        else:
-                            role = 'user'  # default
-                        content = str(msg.content)
-                        if content:
-                            result.append(Message(role=role, content=content))
+                    role = self._message_role(msg)
+                    content = self._message_content(msg)
+                    message_id = msg.get("id") if isinstance(msg, dict) else getattr(msg, "id", None)
+                    if role in ["assistant", "user", "system"] and content:
+                        result.append(Message(role=role, content=content, id=str(message_id) if message_id else None))
                 except Exception as msg_error:
                     logger.warning(f'Skipping message due to error: {msg_error}')
                     continue
             return result
+
+    async def delete_message(self, session_id: str, message_id: str) -> None:
+        # delete a single message and any memories linked to it
+        if self._graph is None:
+            self._graph = await self.create_graph()
+
+        config = {"configurable": {"thread_id": str(session_id)}}
+        state:StateSnapshot = await self._graph.aget_state(config=config)
+
+        if not state.values or 'messages' not in state.values:
+            raise ValueError("message not found")
+
+        raw_messages = state.values['messages']
+        target_message = next(
+            (
+                message
+                for message in raw_messages
+                if isinstance(message, BaseMessage) and str(getattr(message, "id", "")) == str(message_id)
+            ),
+            None,
+        )
+
+        if target_message is None:
+            raise ValueError("message not found")
+
+        memory_ids = self._extract_memory_ids(target_message)
+        if memory_ids:
+            await self.memory_service.delete_memories(memory_ids)
+
+        await self._graph.aupdate_state(
+            config,
+            {"messages": [RemoveMessage(id=str(message_id))]},
+            as_node="chat",
+        )
     
     async def clear_history(self,session_id:str) -> None:
         # clear all history that correspond the session id
@@ -375,9 +496,20 @@ class LangGraphAgent:
                         logger.error(f"{table}: delete failed, error={e}")
                         raise 
 
+            await self.clear_memory(session_id)
+
         except Exception as e:
             logger.error(f"failed_to_clear_chat_history, error={str(e)}")
             raise
+
+    async def clear_memory(self, session_id: str) -> None:
+        # clear memory only and keep checkpoint history intact
+        try:
+            await self.memory_service.clear_memory(session_id)
+        except Exception as e:
+            logger.error(f"failed_to_clear_session_memory, error={str(e)}")
+            raise
+
     async def _get_connection_pool(self) -> AsyncConnectionPool:
         if self._connection_pool is None:
             try:

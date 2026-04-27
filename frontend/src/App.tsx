@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ChatPage from './pages/ChatPage';
 import ProtectedRoute from './components/ProtectedRoute';
+import GlobalSettings from './components/GlobalSettings';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(apiService.isAuthenticated());
@@ -30,25 +31,28 @@ function App() {
 
   return (
     <BrowserRouter>
-      <Routes>
-        <Route
-          path="/login"
-          element={isAuthenticated ? <Navigate to="/chat" /> : <LoginPage setIsAuthenticated={setIsAuthenticated} />}
-        />
-        <Route
-          path="/register"
-          element={isAuthenticated ? <Navigate to="/chat" /> : <RegisterPage setIsAuthenticated={setIsAuthenticated} />}
-        />
-        <Route
-          path="/chat"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
-              <ChatPage onLogout={handleLogout} />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="/" element={<Navigate to={isAuthenticated ? '/chat' : '/login'} />} />
-      </Routes>
+      <>
+        <Routes>
+          <Route
+            path="/login"
+            element={isAuthenticated ? <Navigate to="/chat" /> : <LoginPage setIsAuthenticated={setIsAuthenticated} />}
+          />
+          <Route
+            path="/register"
+            element={isAuthenticated ? <Navigate to="/chat" /> : <RegisterPage setIsAuthenticated={setIsAuthenticated} />}
+          />
+          <Route
+            path="/chat"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated}>
+                <ChatPage onLogout={handleLogout} />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/" element={<Navigate to={isAuthenticated ? '/chat' : '/login'} />} />
+        </Routes>
+        <GlobalSettings />
+      </>
     </BrowserRouter>
   );
 }

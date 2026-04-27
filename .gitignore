@@ -4,3 +4,4 @@ config.toml
 logs/
 doc/**
 chroma_vector_db/
+.codex

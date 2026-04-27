@@ -53,12 +53,20 @@ async def event_generator(chat_request:ChatRequest,session_id:str):
     # generate streaming events
     try:
         session_id = sanitize_string(session_id)
-        full_response = ''
         # link response
         async for chunk in agent.get_stream_response(chat_request.messages,session_id=session_id):
-            full_response += chunk 
             response = StreamResponse(content=chunk,done= False)
             yield f'data:{json.dumps(response.model_dump())}\n\n'
+
+        messages = await agent.get_chat_history(session_id=session_id)
+        final_assistant = next((msg for msg in reversed(messages) if msg.role == 'assistant'), None)
+        if final_assistant:
+            final_response = StreamResponse(
+                content=final_assistant.content,
+                done=True,
+                message_id=final_assistant.id,
+            )
+            yield f'data:{json.dumps(final_response.model_dump())}\n\n'
 
     except Exception as e:
                 logger.exception(
@@ -80,14 +88,42 @@ async def get_messages_in_session(request:Request,session_id:str,current_session
         logger.error(f"get_messages_failed, session_id={str(session_id)}, error={str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete('/messages',summary='delete message')
-async def delete_message(request:Request,session_id:str,current_session = Depends(get_current_session)):
+@router.delete('/messages',summary='clear chat history')
+async def clear_history(request:Request,session_id:str,current_session = Depends(get_current_session)):
     try:
         session_id = sanitize_string(session_id)
         await agent.clear_history(session_id)
         return {"message": "Chat history cleared successfully"}
     except Exception as e:
         logger.error(f'clear_chat_history_failed, session_id={str(session_id)}, error={str(e)}')
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete('/memory', summary='clear session memory only')
+async def clear_session_memory(request: Request, session_id: str, current_session = Depends(get_current_session)):
+    try:
+        session_id = sanitize_string(session_id)
+        await agent.clear_memory(session_id)
+        return {"message": "Session memory cleared successfully"}
+    except Exception as e:
+        logger.error(f'clear_session_memory_failed, session_id={str(session_id)}, error={str(e)}')
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete('/message', summary='delete single message and linked memory')
+async def delete_single_message(
+    request: Request,
+    session_id: str,
+    message_id: str,
+    current_session = Depends(get_current_session),
+):
+    try:
+        session_id = sanitize_string(session_id)
+        message_id = sanitize_string(message_id)
+        await agent.delete_message(session_id=session_id, message_id=message_id)
+        return {"message": "Message deleted successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f'delete_single_message_failed, session_id={str(session_id)}, message_id={str(message_id)}, error={str(e)}')
         raise HTTPException(status_code=500, detail=str(e))
     
 async def close():

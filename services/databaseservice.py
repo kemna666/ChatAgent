@@ -73,10 +73,10 @@ class DataBaseService:
             result = await session.execute(
                 select(User).where(User.email == email)
             )
-            result.scalar_one_or_none()
+            result = result.scalar_one_or_none()
             if not result:
                 return False
-            session.delete(result)
+            await session.delete(result)
             await session.commit()
             logger.info(f'user is deleted,email:{email}')
             return True
@@ -103,7 +103,7 @@ class DataBaseService:
             chat_session = await session.get(ChatSession,session_id)
             if not chat_session:
                 return False
-            session.delete(chat_session)
+            await session.delete(chat_session)
             await session.commit()
             logger.info(f'session deleted,id:{session_id}')
             return True

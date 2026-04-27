@@ -4,17 +4,31 @@ import { Message, SessionResponse } from '../types';
 import { apiService } from '../services/api';
 import MessageBubble from '../components/MessageBubble';
 import SessionList from '../components/SessionList';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface ChatPageProps {
   onLogout: () => void;
 }
 
+function createLocalMessageId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 export default function ChatPage({ onLogout }: ChatPageProps) {
+  const { language, t } = useLanguage();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [sessions, setSessions] = useState<SessionResponse[]>([]);
   const [currentSession, setCurrentSession] = useState<SessionResponse | null>(null);
+  const [sessionPendingDeletion, setSessionPendingDeletion] = useState<SessionResponse | null>(null);
+  const [messagePendingDeletion, setMessagePendingDeletion] = useState<Message | null>(null);
+  const [deletingSession, setDeletingSession] = useState(false);
+  const [deletingMessage, setDeletingMessage] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -63,18 +77,58 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   const handleSendMessage = async () => {
     if (!input.trim() || !currentSession || loading) return;
 
-    const userMessage: Message = { role: 'user', content: input };
-    const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
+    const trimmedInput = input.trim();
+
+    if (trimmedInput === '/clear') {
+      setInput('');
+      setLoading(true);
+      try {
+        await apiService.clearMemory(currentSession.session_id);
+        setMessages(prev => [
+          ...prev,
+          {
+            id: createLocalMessageId(),
+            role: 'assistant',
+            content: t('sessionMemoryCleared'),
+            ephemeral: true,
+          },
+        ]);
+      } catch (error) {
+        console.error('Failed to clear session memory:', error);
+        setMessages(prev => [
+          ...prev,
+          {
+            id: createLocalMessageId(),
+            role: 'assistant',
+            content: t('sessionMemoryClearFailed'),
+            ephemeral: true,
+          },
+        ]);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    const userMessage: Message = {
+      id: createLocalMessageId(),
+      role: 'user',
+      content: trimmedInput,
+    };
+    const uiMessages = [...messages, userMessage];
+    const persistedMessages = [...messages.filter(message => !message.ephemeral), userMessage];
+    setMessages(uiMessages);
     setInput('');
     setLoading(true);
 
     try {
       // Use streaming chat
-      const response = await apiService.streamChat(newMessages, currentSession.session_id);
+      const response = await apiService.streamChat(persistedMessages, currentSession.session_id);
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let assistantContent = '';
+      let buffer = '';
+      const assistantTempId = createLocalMessageId();
 
       if (reader) {
         let assistantAdded = false;
@@ -82,36 +136,46 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
 
-          for (const line of lines) {
-            if (line.startsWith('data:')) {
-              try {
-                const jsonStr = line.slice(5).trim();
-                if (jsonStr) {
-                  const data = JSON.parse(jsonStr);
-                  assistantContent += data.content;
+          for (const event of events) {
+            const line = event
+              .split('\n')
+              .find(part => part.startsWith('data:'));
 
-                  if (!assistantAdded) {
-                    setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-                    assistantAdded = true;
-                  }
+            if (!line) {
+              continue;
+            }
 
-                  setMessages(prev => {
-                    const updated = [...prev];
-                    if (updated.length > 0) {
-                      updated[updated.length - 1] = {
-                        role: 'assistant',
-                        content: assistantContent,
-                      };
-                    }
-                    return updated;
-                  });
-                }
-              } catch (e) {
-                console.error('Parse error:', e);
+            try {
+              const jsonStr = line.slice(5).trim();
+              if (!jsonStr) {
+                continue;
               }
+
+              const data = JSON.parse(jsonStr);
+              if (!assistantAdded) {
+                setMessages(prev => [...prev, { id: assistantTempId, role: 'assistant', content: '' }]);
+                assistantAdded = true;
+              }
+
+              assistantContent = data.done ? data.content : assistantContent + data.content;
+
+              setMessages(prev => {
+                const updated = [...prev];
+                if (updated.length > 0) {
+                  updated[updated.length - 1] = {
+                    id: data.message_id || updated[updated.length - 1].id || assistantTempId,
+                    role: 'assistant',
+                    content: assistantContent,
+                  };
+                }
+                return updated;
+              });
+            } catch (e) {
+              console.error('Parse error:', e);
             }
           }
         }
@@ -119,8 +183,10 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     } catch (error) {
       console.error('Failed to send message:', error);
       const errorMessage: Message = {
+        id: createLocalMessageId(),
         role: 'assistant',
-        content: 'Sorry, failed to get response. Please try again.',
+        content: t('sendMessageFailed'),
+        ephemeral: true,
       };
       setMessages(prev => [...prev, errorMessage]);
     } finally {
@@ -129,7 +195,9 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   };
 
   const handleCreateSession = async () => {
-    const sessionName = `Chat ${new Date().toLocaleDateString()}`;
+    const sessionName = t('sessionNameTemplate', {
+      date: new Date().toLocaleDateString(language === 'zh' ? 'zh-CN' : 'en-US'),
+    });
     try {
       const newSession = await apiService.createSession(sessionName);
       setSessions(prev => [...prev, newSession]);
@@ -140,17 +208,59 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     }
   };
 
-  const handleDeleteSession = async (sessionId: string) => {
+  const promptDeleteSession = (sessionId: string) => {
+    const targetSession = sessions.find(session => session.session_id === sessionId);
+    if (!targetSession) {
+      return;
+    }
+
+    setSessionPendingDeletion(targetSession);
+  };
+
+  const handleDeleteSession = async () => {
+    if (!sessionPendingDeletion || deletingSession) return;
+
+    const sessionId = sessionPendingDeletion.session_id;
+    setDeletingSession(true);
     try {
       await apiService.deleteSession(sessionId);
-      setSessions(prev => prev.filter(s => s.session_id !== sessionId));
+      const remainingSessions = sessions.filter(session => session.session_id !== sessionId);
+      setSessions(remainingSessions);
+
       if (currentSession?.session_id === sessionId) {
-        const remaining = sessions.filter(s => s.session_id !== sessionId);
-        setCurrentSession(remaining.length > 0 ? remaining[0] : null);
+        setCurrentSession(remainingSessions.length > 0 ? remainingSessions[0] : null);
         setMessages([]);
       }
+      setSessionPendingDeletion(null);
     } catch (error) {
       console.error('Failed to delete session:', error);
+    } finally {
+      setDeletingSession(false);
+    }
+  };
+
+  const handleDeleteCurrentSession = async () => {
+    if (!currentSession) return;
+    promptDeleteSession(currentSession.session_id);
+  };
+
+  const promptDeleteMessage = (message: Message) => {
+    if (!message.id || message.ephemeral) return;
+    setMessagePendingDeletion(message);
+  };
+
+  const handleDeleteMessage = async () => {
+    if (!currentSession || !messagePendingDeletion?.id || deletingMessage) return;
+
+    setDeletingMessage(true);
+    try {
+      await apiService.deleteMessage(currentSession.session_id, messagePendingDeletion.id);
+      setMessages(prev => prev.filter(message => message.id !== messagePendingDeletion.id));
+      setMessagePendingDeletion(null);
+    } catch (error) {
+      console.error('Failed to delete message:', error);
+    } finally {
+      setDeletingMessage(false);
     }
   };
 
@@ -195,14 +305,14 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
             onClick={handleCreateSession}
             className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg transition"
           >
-            + New Chat
+            {t('newChatButton')}
           </button>
         </div>
         <SessionList
           sessions={sessions}
           currentSession={currentSession}
           onSelectSession={setCurrentSession}
-          onDeleteSession={handleDeleteSession}
+          onDeleteSession={promptDeleteSession}
           onRenameSession={handleRenameSession}
         />
         <div className="mt-auto p-4 border-t border-gray-200">
@@ -210,7 +320,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
             onClick={onLogout}
             className="w-full bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-lg transition"
           >
-            Logout
+            {t('logout')}
           </button>
         </div>
       </div>
@@ -229,13 +339,23 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
             {currentSession?.name || 'ChatAgent'}
           </h1>
           {currentSession && (
-            <button
-              onClick={handleClearHistory}
-              className="flex items-center gap-2 text-red-500 hover:text-red-700 transition"
-              title="Clear chat history"
-            >
-              <FiTrash2 size={20} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleClearHistory}
+                className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-400 hover:text-gray-900"
+                title={t('clearHistory')}
+              >
+                {t('clearHistory')}
+              </button>
+              <button
+                onClick={handleDeleteCurrentSession}
+                className="flex items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-500 transition hover:border-red-300 hover:text-red-700"
+                title={t('deleteConversation')}
+              >
+                <FiTrash2 size={16} />
+                {t('deleteConversation')}
+              </button>
+            </div>
           )}
         </div>
 
@@ -244,13 +364,18 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           {messages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center text-gray-500">
-                <p className="text-lg mb-2">Welcome to ChatAgent</p>
-                <p className="text-sm">Start a conversation to get help with your questions</p>
+                <p className="text-lg mb-2">{t('welcomeTitle')}</p>
+                <p className="text-sm">{t('welcomeSubtitle')}</p>
               </div>
             </div>
           ) : (
             messages.map((msg, idx) => (
-              <MessageBubble key={idx} message={msg} />
+              <MessageBubble
+                key={msg.id ?? idx}
+                message={msg}
+                onDelete={msg.id && !msg.ephemeral ? promptDeleteMessage : undefined}
+                deleting={deletingMessage && messagePendingDeletion?.id === msg.id}
+              />
             ))
           )}
           <div ref={messagesEndRef} />
@@ -264,7 +389,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-              placeholder="Type your message..."
+              placeholder={t('inputPlaceholder')}
               disabled={!currentSession || loading}
               className="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
             />
@@ -276,8 +401,85 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
               <FiSend size={20} />
             </button>
           </div>
+          <p className="mt-2 text-xs text-gray-500">
+            {t('clearMemoryHint', { command: '/clear' })}
+          </p>
         </div>
       </div>
+
+      {sessionPendingDeletion && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/45 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600">
+                <FiTrash2 size={18} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {t('deleteConversationTitle')}
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-gray-600">
+                  {t('deleteConversationBody', {
+                    name: sessionPendingDeletion.name || t('untitledConversation'),
+                  })}
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setSessionPendingDeletion(null)}
+                disabled={deletingSession}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-400 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {t('cancel')}
+              </button>
+              <button
+                onClick={handleDeleteSession}
+                disabled={deletingSession}
+                className="rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-600 disabled:cursor-not-allowed disabled:bg-red-300"
+              >
+                {deletingSession ? t('deleting') : t('delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {messagePendingDeletion && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/45 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600">
+                <FiTrash2 size={18} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {t('deleteMessageTitle')}
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-gray-600">
+                  {t('deleteMessageBody')}
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setMessagePendingDeletion(null)}
+                disabled={deletingMessage}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-400 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {t('cancel')}
+              </button>
+              <button
+                onClick={handleDeleteMessage}
+                disabled={deletingMessage}
+                className="rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-600 disabled:cursor-not-allowed disabled:bg-red-300"
+              >
+                {deletingMessage ? t('deletingMessage') : t('delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

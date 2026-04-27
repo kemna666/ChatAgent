@@ -2,13 +2,19 @@ import { Message } from '../types';
 import MarkdownIt from 'markdown-it';
 import DOMPurify from 'dompurify';
 import { useMemo } from 'react';
+import { FiTrash2 } from 'react-icons/fi';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface MessageBubbleProps {
   message: Message;
+  onDelete?: (message: Message) => void;
+  deleting?: boolean;
 }
 
-export default function MessageBubble({ message }: MessageBubbleProps) {
+export default function MessageBubble({ message, onDelete, deleting = false }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const { t } = useLanguage();
+  const canDelete = Boolean(onDelete && message.id && !message.ephemeral);
 
   const htmlContent = useMemo(() => {
     if (isUser) {
@@ -41,7 +47,17 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   }, [message.content, isUser]);
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={`group flex items-end gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
+      {!isUser && canDelete && (
+        <button
+          onClick={() => onDelete?.(message)}
+          disabled={deleting}
+          title={t('deleteMessage')}
+          className="rounded-full border border-gray-200 bg-white p-2 text-gray-500 opacity-0 shadow-sm transition hover:border-red-200 hover:text-red-500 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <FiTrash2 size={14} />
+        </button>
+      )}
       <div
         className={`max-w-xs lg:max-w-md xl:max-w-lg px-4 py-2 rounded-lg ${
           isUser
@@ -60,6 +76,16 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           />
         )}
       </div>
+      {isUser && canDelete && (
+        <button
+          onClick={() => onDelete?.(message)}
+          disabled={deleting}
+          title={t('deleteMessage')}
+          className="rounded-full border border-gray-200 bg-white p-2 text-gray-500 opacity-0 shadow-sm transition hover:border-red-200 hover:text-red-500 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <FiTrash2 size={14} />
+        </button>
+      )}
     </div>
   );
 }

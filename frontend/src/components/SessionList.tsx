@@ -1,6 +1,7 @@
 import { SessionResponse } from '../types';
-import { FiTrash2, FiEdit2, FiCheck, FiX } from 'react-icons/fi';
-import { useState } from 'react';
+import { FiCheck, FiEdit2, FiMoreHorizontal, FiTrash2, FiX } from 'react-icons/fi';
+import { useEffect, useState } from 'react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface SessionListProps {
   sessions: SessionResponse[];
@@ -17,12 +18,24 @@ export default function SessionList({
   onDeleteSession,
   onRenameSession,
 }: SessionListProps) {
+  const { t } = useLanguage();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleWindowClick = () => {
+      setMenuOpenId(null);
+    };
+
+    window.addEventListener('click', handleWindowClick);
+    return () => window.removeEventListener('click', handleWindowClick);
+  }, []);
 
   const startEdit = (session: SessionResponse) => {
     setEditingId(session.session_id);
     setEditingName(session.name);
+    setMenuOpenId(null);
   };
 
   const confirmRename = async (sessionId: string) => {
@@ -38,16 +51,20 @@ export default function SessionList({
     setEditingName('');
   };
 
+  const toggleMenu = (sessionId: string) => {
+    setMenuOpenId(current => current === sessionId ? null : sessionId);
+  };
+
   return (
     <div className="flex-1 overflow-y-auto">
       {sessions.length === 0 ? (
         <div className="p-4 text-center text-gray-500 text-sm">
-          No conversations yet
+          {t('noConversations')}
         </div>
       ) : (
         <div className="space-y-2 p-2">
           {sessions.map((session) => (
-            <div key={session.session_id} className="flex items-center gap-2 group">
+            <div key={session.session_id} className="relative flex items-center gap-2 group">
               {editingId === session.session_id ? (
                 <>
                   <input
@@ -65,14 +82,14 @@ export default function SessionList({
                   <button
                     onClick={() => confirmRename(session.session_id)}
                     className="text-green-600 hover:text-green-800 p-1.5 rounded transition"
-                    title="Confirm rename"
+                    title={t('confirmRename')}
                   >
                     <FiCheck size={16} />
                   </button>
                   <button
                     onClick={cancelEdit}
                     className="text-gray-600 hover:text-gray-800 p-1.5 rounded transition"
-                    title="Cancel"
+                    title={t('cancelEdit')}
                   >
                     <FiX size={16} />
                   </button>
@@ -91,19 +108,39 @@ export default function SessionList({
                     <p className="truncate text-sm">{session.name}</p>
                   </button>
                   <button
-                    onClick={() => startEdit(session)}
-                    className="text-gray-500 hover:text-gray-700 p-1.5 hover:bg-gray-100 rounded transition opacity-0 group-hover:opacity-100"
-                    title="Rename conversation"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleMenu(session.session_id);
+                    }}
+                    className="text-gray-500 hover:text-gray-700 p-1.5 hover:bg-gray-100 rounded transition opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                    title={t('moreOptions')}
                   >
-                    <FiEdit2 size={16} />
+                    <FiMoreHorizontal size={16} />
                   </button>
-                  <button
-                    onClick={() => onDeleteSession(session.session_id)}
-                    className="text-red-500 hover:text-red-700 p-1.5 hover:bg-gray-100 rounded transition opacity-0 group-hover:opacity-100"
-                    title="Delete conversation"
-                  >
-                    <FiTrash2 size={16} />
-                  </button>
+                  {menuOpenId === session.session_id && (
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute right-0 top-11 z-20 min-w-36 rounded-xl border border-gray-200 bg-white p-1.5 shadow-lg"
+                    >
+                      <button
+                        onClick={() => startEdit(session)}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-700 transition hover:bg-gray-100"
+                      >
+                        <FiEdit2 size={15} />
+                        {t('rename')}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          onDeleteSession(session.session_id);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-600 transition hover:bg-red-50"
+                      >
+                        <FiTrash2 size={15} />
+                        {t('delete')}
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
             </div>

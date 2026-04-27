@@ -224,9 +224,12 @@ async def delete_session(session_id:str,user:User = Depends(get_current_user)):
             raise HTTPException(status_code=404,detail='session not found')
         
         # 验证 session 属于当前用户
-        if session.user_id != user.id:
+        if str(session.user_id) != str(user.id):
             raise HTTPException(status_code=403,detail='can not delete other sessions')
         
+        from api.v1.chat import agent as chat_agent
+
+        await chat_agent.clear_history(session_id)
         await db_service.delete_session(session_uuid)
 
         logger.success('successful deleted a session')

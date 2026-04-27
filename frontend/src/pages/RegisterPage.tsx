@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { FiMail, FiLock, FiUser } from 'react-icons/fi';
 import { apiService } from '../services/api';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface RegisterPageProps {
   setIsAuthenticated: (value: boolean) => void;
 }
 
 export default function RegisterPage({ setIsAuthenticated }: RegisterPageProps) {
+  const { t } = useLanguage();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -21,17 +23,17 @@ export default function RegisterPage({ setIsAuthenticated }: RegisterPageProps) 
     setError('');
 
     if (!username || !email || !password || !confirmPassword) {
-      setError('All fields are required');
+      setError(t('registerMissingFields'));
       return;
     }
 
     if (password !== confirmPassword) {
-      setError('Passwords do not match');
+      setError(t('registerPasswordMismatch'));
       return;
     }
 
     if (password.length < 10) {
-      setError('Password must be at least 10 characters');
+      setError(t('registerPasswordLength'));
       return;
     }
 
@@ -47,10 +49,10 @@ export default function RegisterPage({ setIsAuthenticated }: RegisterPageProps) 
         setIsAuthenticated(true);
         navigate('/chat');
       } else {
-        setError('Authentication failed. Please try again.');
+        setError(t('registerAuthFailed'));
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Registration failed');
+      setError(err.response?.data?.detail || t('registerFailed'));
     } finally {
       setLoading(false);
     }
@@ -70,7 +72,7 @@ export default function RegisterPage({ setIsAuthenticated }: RegisterPageProps) 
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Username
+              {t('usernameLabel')}
             </label>
             <div className="relative">
               <FiUser className="absolute left-3 top-3 text-gray-400" />
@@ -79,14 +81,14 @@ export default function RegisterPage({ setIsAuthenticated }: RegisterPageProps) 
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Your username"
+                placeholder={t('usernamePlaceholder')}
               />
             </div>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Email
+              {t('emailLabel')}
             </label>
             <div className="relative">
               <FiMail className="absolute left-3 top-3 text-gray-400" />
@@ -95,14 +97,14 @@ export default function RegisterPage({ setIsAuthenticated }: RegisterPageProps) 
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="your@email.com"
+                placeholder={t('emailPlaceholder')}
               />
             </div>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Password
+              {t('passwordLabel')}
             </label>
             <div className="relative">
               <FiLock className="absolute left-3 top-3 text-gray-400" />
@@ -111,17 +113,17 @@ export default function RegisterPage({ setIsAuthenticated }: RegisterPageProps) 
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="••••••••••"
+                placeholder={t('passwordPlaceholder')}
               />
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              At least 10 characters with letters and numbers
+              {t('passwordHint')}
             </p>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Confirm Password
+              {t('confirmPasswordLabel')}
             </label>
             <div className="relative">
               <FiLock className="absolute left-3 top-3 text-gray-400" />
@@ -130,7 +132,7 @@ export default function RegisterPage({ setIsAuthenticated }: RegisterPageProps) 
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="••••••••••"
+                placeholder={t('passwordPlaceholder')}
               />
             </div>
           </div>
@@ -140,14 +142,14 @@ export default function RegisterPage({ setIsAuthenticated }: RegisterPageProps) 
             disabled={loading}
             className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white font-semibold py-2 px-4 rounded-lg transition mt-6"
           >
-            {loading ? 'Creating account...' : 'Sign Up'}
+            {loading ? t('creatingAccount') : t('signUp')}
           </button>
         </form>
 
         <p className="text-center text-gray-600 text-sm mt-6">
-          Already have an account?{' '}
+          {t('alreadyHaveAccount')}{' '}
           <Link to="/login" className="text-blue-500 hover:text-blue-700 font-semibold">
-            Login
+            {t('loginLink')}
           </Link>
         </p>
       </div>

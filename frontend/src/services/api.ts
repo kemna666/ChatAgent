@@ -133,6 +133,18 @@ class ApiService {
     return response.data;
   }
 
+  async clearMemory(sessionId: string) {
+    const response = await this.client.delete(`/chat/memory?session_id=${sessionId}`);
+    return response.data;
+  }
+
+  async deleteMessage(sessionId: string, messageId: string) {
+    const response = await this.client.delete(
+      `/chat/message?session_id=${encodeURIComponent(sessionId)}&message_id=${encodeURIComponent(messageId)}`
+    );
+    return response.data;
+  }
+
   async changePassword(oldPassword: string, newPassword: string) {
     const params = new URLSearchParams();
     params.append('old_passwd', oldPassword);

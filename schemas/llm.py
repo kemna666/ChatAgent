@@ -1,4 +1,4 @@
-from typing import Annotated, Dict, List, Literal
+from typing import Annotated, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 from langgraph.graph.message import add_messages
 import re
@@ -10,7 +10,7 @@ class GraphState(BaseModel):
         default_factory=list, description="The messages in the conversation"
     )
 
-    long_term_memory:str = Field(default='',description='the memory in conversation')
+    session_memory:str = Field(default='',description='memory scoped to the current conversation')
 
 
 
@@ -26,6 +26,8 @@ class Message(BaseModel):
     role:Literal['user','assistant','system'] = Field(...,description='the role of the message sender')
 
     content:str
+
+    id:Optional[str] = Field(default=None,description='message id used for state reconciliation')
 
     @field_validator('content')
     @classmethod
@@ -52,3 +54,5 @@ class StreamResponse(BaseModel):
     content:str = Field(default= '',description='the content of current chunk')
 
     done:bool = Field(default=False,description='whether the stream is complete')
+
+    message_id:Optional[str] = Field(default=None,description='assistant message id when available')

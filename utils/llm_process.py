@@ -40,6 +40,7 @@ def handle_response(message:Union[Message,List[Message]]) -> Message:
 
 def prepare_message(messages:List[Message],llm:BaseChatModel,system_prompt:str) -> List[Message]:
     # prepare messages for llm
+    original_messages = messages
     try:
         messages = dump_messages(messages)
         trimmed_message = _trim_message(
@@ -57,7 +58,8 @@ def prepare_message(messages:List[Message],llm:BaseChatModel,system_prompt:str) 
             logger.warning(
                 f'token_counting_failed_skipping_trim,error = {str(e)},message count = {len(messages)}'
             )
-            trimmed_message = messages
+            trimmed_message = original_messages
+            result = conver_message(trimmed_message)
         
         else: 
             raise
@@ -80,34 +82,58 @@ def conver_message(messages:List[BaseMessage]) -> List[Message]:
                 role = "unknown"
             if role == 'tool':
                 logger.warning(f'detected tool msg , converting...')
-                role = "assistant"
-                lc_msg = tool_to_ai_message(lc_msg)
+                role = "system"
+                lc_msg = tool_to_system_message(lc_msg)
             
             result.append(Message(role=role, content=lc_msg.content))
         return result
 
 
-def tool_to_ai_message(tool_msg: ToolMessage) -> AIMessage:
-# convert tool msy to ai msg
-    return AIMessage(
-        content=f"[TOOL RESULT]\n{tool_msg.content}",
-        additional_kwargs={
-            "tool_name": tool_msg.name,
-            "tool_call_id": tool_msg.tool_call_id,
-        }
+def tool_to_system_message(tool_msg: ToolMessage) -> SystemMessage:
+    # convert tool output into hidden context for the next model turn
+    return SystemMessage(
+        content=(
+            f"Tool `{tool_msg.name}` returned the following context.\n"
+            "Use it to answer the user completely. Do not expose raw tool dumps, "
+            "result indexes, or the literal retrieval transcript unless the user asks for it.\n"
+            f"{tool_msg.content}"
+        )
     )
 
 
-def count_token_in_messages(messages:List[Dict[str,str]]) -> int:
+def _extract_message_content_and_role(message: Any) -> tuple[str, str]:
+    if isinstance(message, dict):
+        role = str(message.get("role") or message.get("type") or "")
+        content = message.get("content", "")
+    else:
+        role = str(getattr(message, "type", getattr(message, "role", "")))
+        content = getattr(message, "content", "")
+
+    if isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    text_parts.append(str(item.get("text", "")))
+                elif "content" in item:
+                    text_parts.append(str(item["content"]))
+            else:
+                text_parts.append(str(item))
+        content = "".join(text_parts)
+
+    return str(content), role
+
+
+def count_token_in_messages(messages:List[Any]) -> int:
     # count token in messages
     encoding = tiktoken.get_encoding("cl100k_base")  
     tokens_per_message = 4  
-    tokens_per_name = -1    # Qwen 不支持 name 字段，可忽略
 
     num_tokens = 0
     for message in messages:
+        content, role = _extract_message_content_and_role(message)
         num_tokens += tokens_per_message
-        num_tokens += len(encoding.encode(message.content))
-        num_tokens += len(encoding.encode(message.type))  # 'system', 'user', 'assistant'
+        num_tokens += len(encoding.encode(content))
+        num_tokens += len(encoding.encode(role))  # 'system', 'user', 'assistant'
     num_tokens += 3  # 每轮对话的额外开销（如 <|im_start|> 等）
     return num_tokens

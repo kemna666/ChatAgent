@@ -1,6 +1,8 @@
 export interface Message {
+  id?: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  ephemeral?: boolean;
 }
 
 export interface ChatRequest {
@@ -14,6 +16,7 @@ export interface ChatResponse {
 export interface StreamResponse {
   content: string;
   done: boolean;
+  message_id?: string;
 }
 
 export interface UserResponse {
